@@ -1,0 +1,119 @@
+# CLAUDE.md
+ 
+This file provides guidance to Claude Code when working with code in this repository.
+ 
+## Repository
+ 
+`github.com/remnestal/albstractions` — a collection of lightweight, general-purpose Go utility modules.
+ 
+## Structure
+
+- The root directory contains no Go code — only submodules (each with their own `go.mod` and independent semver lifecycle).
+- Each submodule is an independent Go module under `github.com/remnestal/albstractions/<name>`.
+ 
+## Environment
+
+This is a private GitHub repo under `github.com/remnestal/albstractions`.
+
+## Commands
+
+```bash
+# Run all tests across all modules
+find . -name go.mod | xargs -I{} dirname {} | xargs -I{} sh -c 'cd {} && go test ./...'
+ 
+# Run tests for a single module
+cd keyloader && go test ./...
+ 
+# Run a single test
+cd keyloader && go test ./path/to/pkg -run TestFunctionName
+ 
+# Run a single subtest
+cd keyloader && go test ./path/to/pkg -run TestFunctionName/subtest_name
+ 
+# Run tests with race detector (always do this before tagging)
+cd keyloader && go test -race ./...
+ 
+# Lint a module
+cd keyloader && golangci-lint run ./...
+ 
+# Lint all modules
+find . -name go.mod | xargs -I{} dirname {} | xargs -I{} sh -c 'cd {} && golangci-lint run ./...'
+```
+
+## Adding a New Module
+ 
+1. Create a new directory at the repo root: `mkdir <module>`
+2. Initialise the module: `cd <module> && go mod init github.com/remnestal/albstractions/<module>`
+3. Follow the package layout conventions below.
+4. Add CI path filtering for the new module (see Release & Tagging).
+5. Add a new entry to `.github/dependabot.yml` with `directory: /<module>`.
+6. Add the module to the `matrix.module` list in `.github/workflows/ci.yml`.
+7. Start versioning from `v0.1.0`.
+
+## Inter-Module Dependencies
+ 
+Some modules depend on others (e.g. `mtls` → `pki` → `keyloader`). When working locally:
+ 
+- Use `replace` directives in `go.mod` to point at local paths during development.
+- **Remove all `replace` directives before tagging a release** — they must not appear in published modules.
+- Keep the dependency graph acyclic. If a circular dependency is tempting, it is a sign the boundary is wrong.
+
+## Package Layout
+ 
+- Each module's root package exposes the primary API.
+- `<module>/mock/` sub-packages provide test doubles intended for import in *other* projects — use these when the real implementation is too heavy for unit tests.
+- Do not put shared helpers in the root of the repo — if something is needed by multiple modules, it either belongs in its own module or indicates the modules should be merged.
+
+## Release & Tagging
+ 
+Modules are tagged independently using the format `<module>/vX.Y.Z` (e.g. `keyloader/v1.2.0`). Go's toolchain resolves these natively.
+ 
+**Tagging checklist before a release:**
+1. All `replace` directives removed from `go.mod`.
+2. `go mod tidy` has been run.
+3. `go test -race ./...` passes.
+4. `golangci-lint run ./...` is clean.
+5. Tag format: `git tag <module>/vX.Y.Z && git push origin <module>/vX.Y.Z
+
+Follow semver strictly:
+- **Patch** (`v1.0.x`): bug fixes, no API change.
+- **Minor** (`v1.x.0`): new backwards-compatible functionality.
+- **Major** (`vX.0.0`): breaking API change. For v2+, the module path must include the major version suffix (e.g. `github.com/remnestal/albstractions/keyloader/v2`).
+ 
+Do **not** retag an existing version. If something was wrong, release a new patch.
+
+## Design Principles
+ 
+**API shape:**
+- Mandatory arguments belong in function signatures, not option structs (structs provide no type safety for zero values).
+- Optional configuration uses the `(opts ...Option)` variadic pattern.
+ 
+**Security and robustness are first-class** alongside simplicity and ease of use.
+ 
+**Module independence:** each module must be usable standalone. Do not add a dependency on another `albstractions` module unless it is clearly justified — prefer a small amount of duplication over tight coupling.
+
+## Comments & Godoc
+
+- Every exported symbol must have a doc comment.
+- Comments start with the symbol name: `// Retry executes f up to n times...`
+- One sentence is often enough — prefer a clear single line over a padded paragraph.
+- Document the *why* or non-obvious behaviour, not what the signature already says.
+- Package-level comments should describe purpose and typical usage in 2–3 lines; no need for a full example unless the API is non-obvious.
+- Unexported symbols: comment only when the logic is non-trivial.
+
+## Commit Messages
+ 
+Use semantic commit messages with a module scope: `<type>(<module>): <description>`.
+
+**Examples:**
+- `fix(pki): handle expired root CA gracefully`
+- `docs(mtls): clarify mTLS handshake example`
+
+Common types: `feat`, `fix`, `chore`, `refactor`, `test`, `docs`.
+
+## Testing Conventions
+ 
+- Use `testify/assert` (non-fatal) and `testify/require` (fatal on failure).
+- Each subtest lives in its own `t.Run(...)` block with a concise descriptive name explaining the expected behaviour.
+- All tests must be parallelisable — call `t.Parallel()` at the top of every test and subtest.
+- Use table-driven tests when multiple cases share the same structure but differ only in inputs/outputs.
