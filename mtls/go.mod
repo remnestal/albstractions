@@ -3,8 +3,8 @@ module github.com/remnestal/albstractions/mtls
 go 1.26
 
 require (
-	github.com/remnestal/albstractions/keyloader v0.1.2
-	github.com/remnestal/albstractions/pki v0.1.2
+	github.com/remnestal/albstractions/keyloader v0.1.3
+	github.com/remnestal/albstractions/pki v0.1.3
 	github.com/stretchr/testify v1.11.1
 )
 
