@@ -96,7 +96,17 @@ Do **not** retag an existing version. If something was wrong, release a new patc
 
 - Every exported symbol must have a doc comment.
 - Comments start with the symbol name: `// Retry executes f up to n times...`
-- One sentence is often enough — prefer a clear single line over a padded paragraph.
+- Doc comments begin with a single high-level summary line.
+- Additional detail goes in one or more note blocks below the summary, each separated by an empty comment line (`//`). Example:
+  ```go
+  // Retry executes f up to n times, returning the last error.
+  //
+  // Between attempts it waits according to the configured backoff.
+  // A zero n is treated as a single attempt.
+  //
+  // Retry is safe for concurrent use.
+  func Retry(n int, f func() error) error { ... }
+  ```
 - Document the *why* or non-obvious behaviour, not what the signature already says.
 - Package-level comments should describe purpose and typical usage in 2–3 lines; no need for a full example unless the API is non-obvious.
 - Unexported symbols: comment only when the logic is non-trivial.
