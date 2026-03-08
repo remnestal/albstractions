@@ -4,11 +4,11 @@ Small, focused Go modules for recurring service plumbing like certificates. Each
 
 ## Usage
 
-Tags are scoped by module path (`keyloader/v0.1.3`, `pki/v0.1.3`). Import only the ones you need:
+Tags are scoped by module path (`keyloader/v0.1.3`, `schedule/v0.1.0`). Import only the ones you need:
 
 ```bash
 go get github.com/remnestal/albstractions/keyloader
-go get github.com/remnestal/albstractions/pki
+go get github.com/remnestal/albstractions/schedule
 ```
 
 ## Modules
@@ -18,6 +18,7 @@ go get github.com/remnestal/albstractions/pki
 | [`keyloader`](./keyloader) | Key loading and management |
 | [`mtls`](./mtls) | Mutual TLS helpers |
 | [`pki`](./pki) | Self-signed PKI and certificate utilities |
+| [`schedule`](./schedule) | Delay strategies for throttling, rate-limiting, and backoff |
 
 ## Design
 

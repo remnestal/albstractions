@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        module: [keyloader, pki, mtls]
+        module: [keyloader, pki, mtls, schedule]
     steps:
       - uses: actions/checkout@v4
 
