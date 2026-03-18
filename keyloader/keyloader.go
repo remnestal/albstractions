@@ -57,8 +57,9 @@ func WithEnvDecoder(decoder Decoder) EnvOption {
 	}
 }
 
-// WithEnvTrimWhitespace removes all whitespace characters (spaces, tabs,
-// newlines) from the value before decoding — not just leading/trailing.
+// WithEnvTrimWhitespace removes all whitespace characters from the value before decoding.
+//
+// This removes all whitespace (spaces, tabs, newlines) — not just leading/trailing.
 // This is intentional for handling multiline encoded formats, but means
 // a value like "my key" will silently become "mykey".
 func WithEnvTrimWhitespace() EnvOption {
@@ -150,8 +151,9 @@ func WithFileDecoder(decoder Decoder) FileOption {
 	}
 }
 
-// WithFileTrimWhitespace removes all whitespace characters (spaces, tabs,
-// newlines) from the file contents before decoding — not just leading/trailing.
+// WithFileTrimWhitespace removes all whitespace characters from the file contents before decoding.
+//
+// This removes all whitespace (spaces, tabs, newlines) — not just leading/trailing.
 // This is intentional for handling multiline encoded formats, but means
 // content like "my key" will silently become "mykey".
 func WithFileTrimWhitespace() FileOption {
@@ -224,9 +226,10 @@ func FromFile(path string, opts ...FileOption) Provider {
 // ---------------------------------------------------------------------------
 
 // processKey handles common key processing: trimming whitespace, decoding,
-// and creating a cleanup function. It takes ownership of data — callers must
-// not use data after this call, and must call the returned free function to
-// zero all key material.
+// and creating a cleanup function.
+//
+// It takes ownership of data — callers must not use data after this call,
+// and must call the returned free function to zero all key material.
 func processKey(data []byte, trimWhitespace bool, decoder Decoder) ([]byte, func(), error) {
 	if trimWhitespace {
 		original := data

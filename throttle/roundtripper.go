@@ -6,6 +6,7 @@ import (
 )
 
 // RoundTripper is an http.RoundTripper that paces outbound requests using Do.
+//
 // Requests are spaced by the Throttle's schedule; use WithMaxInflight to control
 // how many may be in flight concurrently (default: 1).
 type RoundTripper struct {

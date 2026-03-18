@@ -6,8 +6,9 @@ import (
 	"time"
 )
 
-// Exponential implements an exponential backoff schedule. Each call to Next
-// multiplies the current delay by the configured factor until it reaches
+// Exponential implements an exponential backoff schedule.
+//
+// Each call to Next multiplies the current delay by the configured factor until it reaches
 // maxDelay. The delay is stateful — it grows across successive calls.
 // Call Reset to start a new backoff sequence.
 type Exponential struct {

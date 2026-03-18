@@ -12,6 +12,7 @@ import (
 )
 
 // Schedule returns the duration to wait before the next event.
+//
 // Any type satisfying this interface (e.g. types from
 // github.com/remnestal/albstractions/schedule) can be used.
 type Schedule interface {
@@ -66,6 +67,7 @@ func New(s Schedule, opts ...Option) *Throttle {
 }
 
 // Do waits until the next allowed dispatch time, then runs fn.
+//
 // Consecutive Do calls on the same Throttle are spaced by at least s.Next();
 // the first call is not delayed. If ctx is cancelled during the wait, Do
 // returns ctx.Err() without calling fn; the internal cadence still advances
