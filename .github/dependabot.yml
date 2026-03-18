@@ -19,3 +19,8 @@ updates:
     directory: /schedule
     schedule:
       interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /throttle
+    schedule:
+      interval: weekly

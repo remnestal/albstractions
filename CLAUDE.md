@@ -48,7 +48,9 @@ find . -name go.mod | xargs -I{} dirname {} | xargs -I{} sh -c 'cd {} && golangc
 4. Add CI path filtering for the new module (see Release & Tagging).
 5. Add a new entry to `.github/dependabot.yml` with `directory: /<module>`.
 6. Add the module to the `matrix.module` list in `.github/workflows/ci.yml`.
-7. Start versioning from `v0.1.0`.
+7. Create `<module>/README.md` with the module's purpose, install command, and a minimal usage example.
+8. Add the module to the modules table in the root `README.md`.
+9. Start versioning from `v0.1.0`.
 
 ## Inter-Module Dependencies
  
@@ -61,6 +63,7 @@ Some modules depend on others (e.g. `mtls` → `pki` → `keyloader`). When work
 ## Package Layout
  
 - Each module's root package exposes the primary API.
+- Each module ships a `README.md` at its root: purpose, install command, and a minimal usage example.
 - `<module>/mock/` sub-packages provide test doubles intended for import in *other* projects — use these when the real implementation is too heavy for unit tests.
 - Do not put shared helpers in the root of the repo — if something is needed by multiple modules, it either belongs in its own module or indicates the modules should be merged.
 
