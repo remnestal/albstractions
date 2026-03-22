@@ -1,17 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: gomod
-    directory: /keyloader
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: gomod
-    directory: /pki
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: gomod
-    directory: /mtls
+    directory: /certkit
     schedule:
       interval: weekly
 

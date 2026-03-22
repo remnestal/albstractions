@@ -12,7 +12,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
-	"github.com/remnestal/albstractions/keyloader"
+	"github.com/remnestal/albstractions/certkit/keyloader"
 )
 
 // Option configures a TLS config.

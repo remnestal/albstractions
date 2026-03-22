@@ -1,4 +1,4 @@
-module github.com/remnestal/albstractions/pki
+module github.com/remnestal/albstractions/certkit
 
 go 1.26
 

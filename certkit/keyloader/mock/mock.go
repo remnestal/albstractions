@@ -5,7 +5,7 @@ import (
 	"io/fs"
 	"time"
 
-	"github.com/remnestal/albstractions/keyloader"
+	"github.com/remnestal/albstractions/certkit/keyloader"
 )
 
 // StaticProvider returns a Provider that always yields the given data.

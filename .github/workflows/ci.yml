@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        module: [keyloader, pki, mtls, schedule, throttle]
+        module: [certkit, schedule, throttle]
     steps:
       - uses: actions/checkout@v4
 
@@ -27,4 +27,6 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v6
         with:
+          version: latest
+          install-mode: goinstall
           working-directory: ${{ matrix.module }}

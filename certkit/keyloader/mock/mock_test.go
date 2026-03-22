@@ -5,7 +5,7 @@ import (
 	"io/fs"
 	"testing"
 
-	"github.com/remnestal/albstractions/keyloader/mock"
+	"github.com/remnestal/albstractions/certkit/keyloader/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/remnestal/albstractions/pki"
+	"github.com/remnestal/albstractions/certkit/pki"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

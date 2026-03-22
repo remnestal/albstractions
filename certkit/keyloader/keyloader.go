@@ -7,7 +7,7 @@
 // memory. Providers are constructed with [FromEnv] or [FromFile] and support
 // optional hex/base64 decoding and whitespace trimming.
 //
-// The keyloader/mock sub-package provides [mock.FileSystem] and helpers for
+// The mock sub-package provides [mock.FileSystem] and helpers for
 // use in tests of code that accepts a Provider.
 package keyloader
 
