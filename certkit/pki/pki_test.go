@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"math/big"
 	"net"
 	"testing"
 	"time"
@@ -85,6 +86,40 @@ func TestGenerateCA(t *testing.T) {
 
 		cert := parseCert(t, bundle.CertPEM)
 		assert.Equal(t, 2, cert.MaxPathLen)
+	})
+
+	t.Run("WithSerial sets serial on CA certificate", func(t *testing.T) {
+		t.Parallel()
+
+		want := big.NewInt(42)
+		bundle, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour, pki.WithSerial(want))
+		require.NoError(t, err)
+
+		cert := parseCert(t, bundle.CertPEM)
+		assert.Equal(t, 0, want.Cmp(cert.SerialNumber))
+	})
+
+	t.Run("WithSerial rejects zero serial", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour, pki.WithSerial(big.NewInt(0)))
+		assert.Error(t, err)
+	})
+
+	t.Run("WithSerial rejects negative serial", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour, pki.WithSerial(big.NewInt(-1)))
+		assert.Error(t, err)
+	})
+
+	t.Run("WithSerial rejects serial exceeding 20 octets", func(t *testing.T) {
+		t.Parallel()
+
+		// 2^161 is 21 octets.
+		tooBig := new(big.Int).Lsh(big.NewInt(1), 161)
+		_, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour, pki.WithSerial(tooBig))
+		assert.Error(t, err)
 	})
 
 	t.Run("supports all key algorithms", func(t *testing.T) {
@@ -257,6 +292,17 @@ func TestGeneratePeerCert(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "SAN")
 	})
+
+	t.Run("WithSerial sets serial on peer certificate", func(t *testing.T) {
+		t.Parallel()
+
+		want := big.NewInt(99)
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour, pki.WithSerial(want))
+		require.NoError(t, err)
+
+		cert := parseCert(t, leaf.CertPEM)
+		assert.Equal(t, 0, want.Cmp(cert.SerialNumber))
+	})
 }
 
 func TestGenerateServerCert(t *testing.T) {
@@ -293,6 +339,17 @@ func TestGenerateServerCert(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "SAN")
 	})
+
+	t.Run("WithSerial sets serial on server certificate", func(t *testing.T) {
+		t.Parallel()
+
+		want := big.NewInt(7)
+		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", []string{"localhost"}, nil, time.Hour, pki.WithSerial(want))
+		require.NoError(t, err)
+
+		cert := parseCert(t, leaf.CertPEM)
+		assert.Equal(t, 0, want.Cmp(cert.SerialNumber))
+	})
 }
 
 func TestGenerateClientCert(t *testing.T) {
@@ -310,5 +367,16 @@ func TestGenerateClientCert(t *testing.T) {
 		cert := parseCert(t, leaf.CertPEM)
 		assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
 		assert.NotContains(t, cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
+	})
+
+	t.Run("WithSerial sets serial on client certificate", func(t *testing.T) {
+		t.Parallel()
+
+		want := big.NewInt(1000)
+		leaf, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", nil, nil, time.Hour, pki.WithSerial(want))
+		require.NoError(t, err)
+
+		cert := parseCert(t, leaf.CertPEM)
+		assert.Equal(t, 0, want.Cmp(cert.SerialNumber))
 	})
 }

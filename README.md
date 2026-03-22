@@ -4,7 +4,7 @@ Small, focused Go modules for recurring service plumbing like throttling and cer
 
 ## Usage
 
-Tags are scoped by module path (`certkit/v0.1.0`, `schedule/v0.1.0`). Import only the ones you need:
+Tags are scoped by module path (`certkit/v0.2.0`, `schedule/v0.1.0`). Import only the ones you need:
 
 ```bash
 go get github.com/remnestal/albstractions/certkit
