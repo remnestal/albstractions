@@ -93,7 +93,7 @@ Do **not** retag an existing version. If something was wrong, release a new patc
  
 **Security and robustness are first-class** alongside simplicity and ease of use.
  
-**Module independence:** each module must be usable standalone. Do not add a dependency on another `albstractions` module unless it is clearly justified — prefer a small amount of duplication over tight coupling.
+**Module independence:** each module's API must be complete and well-designed on its own merits — no module should expose a half-baked API just to power another module in this repo. Composition between `albstractions` modules is perfectly fine and encouraged when there is a clear fit — this is how the ecosystem grows coherently. Keep the dependency graph acyclic; a circular dependency is a sign the boundary is wrong.
 
 ## Comments & Godoc
 
