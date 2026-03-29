@@ -127,7 +127,11 @@ Do **not** retag an existing version. If something was wrong, release a new patc
   // Retry is safe for concurrent use.
   func Retry(n int, f func() error) error { ... }
   ```
+- `Panics if …`, `By default …`, and `Default: …` caveats are their own note block, never appended to the summary line.
 - Document the *why* or non-obvious behaviour, not what the signature already says.
+- Cross-references to other exported symbols use godoc `[Symbol]` doc-link syntax.
+- In prose, use ASCII `<=` / `>=` / `< 0`, not `≤`/`≥`.
+- Do not use decorative banner/separator comments (`// ----`); rely on godoc structure and file organisation.
 - Package-level comments should describe purpose and typical usage in 2–3 lines; no need for a full example unless the API is non-obvious.
 - Unexported symbols: comment only when the logic is non-trivial.
 
