@@ -17,6 +17,23 @@ This is a private GitHub repo under `github.com/remnestal/albstractions`.
 
 ## Commands
 
+### Task runner
+
+A root `Taskfile.yml` runs lint/test/fmt/tidy across every module (modules are
+discovered dynamically, so new ones need no Taskfile edits).
+
+```bash
+task verify        # lint, test (-race), and require fmt/tidy clean — the commit gate
+task fmt           # apply gofmt across every module
+task tidy          # apply go mod tidy across every module
+task hooks:install # one-time per clone: enable the versioned pre-commit hook
+```
+
+`task hooks:install` points `core.hooksPath` at `.githooks/`, whose `pre-commit`
+hook runs `task verify`. Bypass for WIP with `git commit --no-verify`.
+
+### Raw commands (no task runner)
+
 ```bash
 # Run all tests across all modules
 find . -name go.mod | xargs -I{} dirname {} | xargs -I{} sh -c 'cd {} && go test ./...'

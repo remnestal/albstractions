@@ -1,0 +1,74 @@
+# Root task runner for the monorepo.
+#
+# Modules are discovered dynamically from go.mod files, so new modules are
+# picked up automatically with no edits here.
+#
+#   task               # the full pre-commit gate (alias for verify)
+#   task verify        # lint, test, and verify fmt/tidy are clean
+#   task fmt           # apply gofmt across every module
+#   task tidy          # apply go mod tidy across every module
+#   task hooks:install # one-time: enable the versioned pre-commit hook
+version: "3"
+
+vars:
+  MODULES:
+    sh: find . -name go.mod -not -path './.git/*' | xargs -n1 dirname | sort
+
+tasks:
+  default:
+    desc: Full pre-commit gate (alias for verify)
+    cmds:
+      - task: verify
+
+  verify:
+    desc: Lint, test, and verify fmt/tidy are clean (enforced by pre-commit)
+    cmds:
+      - task: fmt:require
+      - task: tidy:require
+      - task: lint
+      - task: test
+
+  lint:
+    desc: Run golangci-lint in every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: 'echo ">> lint {{.ITEM}}" && cd {{.ITEM}} && golangci-lint run ./...'
+
+  test:
+    desc: Run tests with the race detector in every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: 'echo ">> test {{.ITEM}}" && cd {{.ITEM}} && go test -race ./...'
+
+  fmt:
+    desc: Apply gofmt across every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: 'echo ">> fmt {{.ITEM}}" && gofmt -w {{.ITEM}}'
+
+  fmt:require:
+    desc: Fail if any file is not gofmt-clean (run `task fmt` to fix)
+    cmds:
+      - for: { var: MODULES }
+        cmd: |
+          echo ">> fmt:require {{.ITEM}}"
+          out=$(gofmt -l {{.ITEM}})
+          [ -z "$out" ] || { echo "not gofmt-clean:" >&2; echo "$out" >&2; echo "run: task fmt" >&2; exit 1; }
+
+  tidy:
+    desc: Apply go mod tidy across every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: 'echo ">> tidy {{.ITEM}}" && cd {{.ITEM}} && go mod tidy'
+
+  tidy:require:
+    desc: Fail if go.mod/go.sum are not tidy (run `task tidy` to fix)
+    cmds:
+      - for: { var: MODULES }
+        cmd: 'echo ">> tidy:require {{.ITEM}}" && cd {{.ITEM}} && go mod tidy -diff'
+
+  hooks:install:
+    desc: Enable the versioned pre-commit hook for this clone
+    cmds:
+      - git config core.hooksPath .githooks
+      - echo "pre-commit hook enabled (core.hooksPath -> .githooks)"

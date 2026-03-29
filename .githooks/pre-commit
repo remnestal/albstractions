@@ -1,0 +1,21 @@
+#!/bin/sh
+# Pre-commit gate for the monorepo.
+#
+# Runs `task verify` (fmt, tidy, lint, test across every module) from the repo
+# root. Enable with: task hooks:install
+#
+# Bypass for work-in-progress commits: git commit --no-verify
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+if ! command -v task >/dev/null 2>&1; then
+  echo "pre-commit: 'task' not found — install go-task or use --no-verify" >&2
+  exit 1
+fi
+
+if ! task verify; then
+  echo >&2
+  echo "pre-commit: verification failed; fix the above or use 'git commit --no-verify'" >&2
+  exit 1
+fi

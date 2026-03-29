@@ -31,4 +31,6 @@ go get github.com/remnestal/albstractions/schedule
 
 Semantic commit messages with module scope: `feat(certkit): ...`, `fix(schedule): ...`
 
+Requires [go-task](https://taskfile.dev). Run `task hooks:install` once per clone to enable the pre-commit gate (lint, test, fmt, tidy).
+
 See [CLAUDE.md](./CLAUDE.md) for full development conventions.
