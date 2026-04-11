@@ -16,10 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
 func generateTestCA(t *testing.T) pki.Bundle {
 	t.Helper()
 	bundle, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", 48*time.Hour)
@@ -33,10 +29,6 @@ func generateTestCert(t *testing.T, commonName string, ca pki.Bundle) pki.Bundle
 	require.NoError(t, err)
 	return bundle
 }
-
-// ---------------------------------------------------------------------------
-// Tests for NewTLSConfig
-// ---------------------------------------------------------------------------
 
 func TestNewTLSConfig(t *testing.T) {
 	t.Parallel()
@@ -196,10 +188,6 @@ func TestNewTLSConfig(t *testing.T) {
 		assert.Contains(t, err.Error(), "parse CA certificate")
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Integration tests
-// ---------------------------------------------------------------------------
 
 func TestMTLSIntegration(t *testing.T) {
 	t.Parallel()

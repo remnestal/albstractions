@@ -8,7 +8,9 @@ import (
 	"github.com/remnestal/albstractions/certkit/keyloader"
 )
 
-// StaticProvider returns a Provider that always yields the given data.
+// StaticProvider returns a [keyloader.Provider] that always yields the given
+// data.
+//
 // The free function is a no-op.
 func StaticProvider(data []byte) keyloader.Provider {
 	return func() ([]byte, func(), error) {
@@ -16,7 +18,9 @@ func StaticProvider(data []byte) keyloader.Provider {
 	}
 }
 
-// ErrorProvider returns a Provider that always fails with the given error.
+// ErrorProvider returns a [keyloader.Provider] that always fails with the
+// given error.
+//
 // The free function is a no-op (non-nil), satisfying the Provider contract.
 func ErrorProvider(err error) keyloader.Provider {
 	return func() ([]byte, func(), error) {
@@ -30,9 +34,10 @@ type File struct {
 	Mode fs.FileMode
 }
 
-// FileSystem implements keyloader.FileSystem backed by an in-memory map.
-// Use it with keyloader.WithFilesystem to test code that loads keys from files
-// without touching the real filesystem.
+// FileSystem implements [keyloader.FileSystem] backed by an in-memory map.
+//
+// Use it with [keyloader.WithFilesystem] to test code that loads keys from
+// files without touching the real filesystem.
 type FileSystem struct {
 	Files map[string]File
 }

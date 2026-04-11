@@ -18,10 +18,6 @@ func mockEnvGetter(envVars map[string]string) func(string) string {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Tests for FromEnv
-// ---------------------------------------------------------------------------
-
 func TestFromEnv(t *testing.T) {
 	t.Parallel()
 
@@ -184,10 +180,6 @@ func TestFromEnv(t *testing.T) {
 		free()
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Tests for FromFile
-// ---------------------------------------------------------------------------
 
 func TestFromFile(t *testing.T) {
 	t.Parallel()

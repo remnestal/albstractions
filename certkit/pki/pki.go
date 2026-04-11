@@ -1,11 +1,8 @@
-// Package pki provides CA and leaf certificate generation for internal PKI
-// and testing.
+// Package pki generates CA and leaf certificates for internal PKI and testing.
 //
-// Use [GenerateCA] to create a self-signed CA, then [GeneratePeerCert],
-// [GenerateServerCert], or [GenerateClientCert] to issue leaf certificates
-// signed by that CA. All functions return a [Bundle] containing PEM-encoded
-// certificate and private key bytes ready for use with the standard library
-// or the mtls package.
+// Use [GenerateCA] for a self-signed CA, then [GenerateServerCert],
+// [GenerateClientCert], or [GeneratePeerCert] for leaf certificates. Each
+// returns a [Bundle] of PEM-encoded certificate and key bytes.
 package pki
 
 import (
@@ -30,8 +27,10 @@ type Bundle struct {
 	KeyPEM  []byte
 }
 
-// KeyAlgorithm generates a private key. Use one of the provided constructors
-// (ECDSAP256, ECDSAP384, RSA2048, RSA4096, Ed25519) or supply a custom one.
+// KeyAlgorithm generates a private key.
+//
+// Use one of the provided constructors ([ECDSAP256], [ECDSAP384], [RSA2048],
+// [RSA4096], [Ed25519]) or supply a custom one.
 type KeyAlgorithm func() (crypto.Signer, error)
 
 // ECDSAP256 generates an ECDSA P-256 key.
@@ -79,9 +78,10 @@ type certConfig struct {
 	serial         *big.Int
 }
 
-// WithMaxPathLen sets the maximum CA chain depth. A value of 0 with
-// WithMaxPathLen(0) enforces a single-level hierarchy (no intermediate CAs).
-// By default, path length is set to 0 (single-level).
+// WithMaxPathLen sets the maximum CA chain depth.
+//
+// A value of 0 enforces a single-level hierarchy (no intermediate CAs); this
+// is the default.
 //
 // WithMaxPathLen is ignored when passed to leaf certificate functions.
 func WithMaxPathLen(n int) Option {
@@ -92,9 +92,10 @@ func WithMaxPathLen(n int) Option {
 }
 
 // WithSerial sets a fixed serial number for the generated certificate.
-// serial must be a positive integer whose absolute value fits within 20 octets
-// (RFC 5280 §4.1.2.2). If not set, a cryptographically random 128-bit serial
-// is used.
+//
+// serial must be a positive integer whose absolute value fits within 20
+// octets (RFC 5280 §4.1.2.2). If not set, a cryptographically random 128-bit
+// serial is used.
 func WithSerial(serial *big.Int) Option {
 	return func(c *certConfig) {
 		c.serial = serial
@@ -102,6 +103,7 @@ func WithSerial(serial *big.Int) Option {
 }
 
 // GenerateCA creates a self-signed CA certificate using the given algorithm.
+//
 // By default the CA enforces a single-level hierarchy (MaxPathLen=0).
 func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Duration, opts ...Option) (Bundle, error) {
 	cfg := &certConfig{
@@ -156,7 +158,9 @@ func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Du
 }
 
 // GenerateServerCert creates a leaf certificate for server authentication,
-// signed by the given CA. At least one DNS name or IP address must be provided.
+// signed by the given CA.
+//
+// At least one DNS name or IP address must be provided.
 func GenerateServerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
 	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, opts...)
 }
@@ -168,8 +172,9 @@ func GenerateClientCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dn
 }
 
 // GeneratePeerCert creates a leaf certificate for mutual TLS, valid for both
-// server and client authentication, signed by the given CA. At least one DNS
-// name or IP address must be provided.
+// server and client authentication, signed by the given CA.
+//
+// At least one DNS name or IP address must be provided.
 func GeneratePeerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
 	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, opts...)
 }

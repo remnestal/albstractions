@@ -1,14 +1,9 @@
-// Package keyloader provides secure methods for loading cryptographic key
-// material from environment variables or files.
+// Package keyloader loads cryptographic key material from environment
+// variables or files.
 //
-// The central type is [Provider]: a function that returns the raw key bytes
-// and a free function that zeros them when called. Callers should always
-// defer the free function to limit the lifetime of sensitive material in
-// memory. Providers are constructed with [FromEnv] or [FromFile] and support
-// optional hex/base64 decoding and whitespace trimming.
-//
-// The mock sub-package provides [mock.FileSystem] and helpers for
-// use in tests of code that accepts a Provider.
+// Construct a [Provider] with [FromEnv] or [FromFile]; it returns the key
+// bytes and a free function that zeros them — always defer free. The mock
+// sub-package provides test doubles.
 package keyloader
 
 import (
@@ -20,18 +15,16 @@ import (
 	"os"
 )
 
-// Provider is a function that returns a cryptographic key and a cleanup function.
+// Provider returns a cryptographic key and a cleanup function.
+//
 // The cleanup function zeros the key bytes and should be called when the key
 // is no longer needed. It is always non-nil (even on error) so callers can
-// unconditionally defer it, and idempotent so it is safe to call multiple times.
+// unconditionally defer it, and idempotent so it is safe to call multiple
+// times.
 type Provider func() (key []byte, free func(), err error)
 
 // Decoder is a function that decodes a string into bytes.
 type Decoder func(string) ([]byte, error)
-
-// ---------------------------------------------------------------------------
-// Environment variable configuration
-// ---------------------------------------------------------------------------
 
 type envConfig struct {
 	getter         func(string) string
@@ -79,8 +72,9 @@ func WithEnvBase64() EnvOption {
 	return WithEnvDecoder(base64.StdEncoding.DecodeString)
 }
 
-// FromEnv returns a Provider that reads a key from an environment variable.
-// By default, the key is read as raw bytes. Use options to customize behavior.
+// FromEnv returns a [Provider] that reads a key from an environment variable.
+//
+// By default the key is read as raw bytes. Use options to customise behaviour.
 //
 // Note: the Go runtime represents environment variable values as immutable
 // strings. The Provider converts the value to a []byte copy and zeros that
@@ -104,10 +98,6 @@ func FromEnv(envVar string, opts ...EnvOption) Provider {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// File configuration
-// ---------------------------------------------------------------------------
-
 // FileSystem abstracts file system operations for testability.
 type FileSystem interface {
 	ReadFile(name string) ([]byte, error)
@@ -117,12 +107,10 @@ type FileSystem interface {
 // osfs is a FileSystem implementation using the real OS filesystem.
 type osfs struct{}
 
-// ReadFile reads a file from the OS filesystem.
 func (osfs) ReadFile(name string) ([]byte, error) {
 	return os.ReadFile(name)
 }
 
-// Stat returns file info from the OS filesystem.
 func (osfs) Stat(name string) (fs.FileInfo, error) {
 	return os.Stat(name)
 }
@@ -180,9 +168,10 @@ func WithFileBase64() FileOption {
 	return WithFileDecoder(base64.StdEncoding.DecodeString)
 }
 
-// FromFile returns a Provider that reads a key from a file.
-// By default it uses the OS filesystem and checks that file permissions
-// are 0600 or stricter.
+// FromFile returns a [Provider] that reads a key from a file.
+//
+// By default it uses the OS filesystem and checks that file permissions are
+// 0600 or stricter.
 //
 // Note: the permission check is subject to a TOCTOU race — the file's
 // permissions could change between the Stat and ReadFile calls. There is
@@ -220,10 +209,6 @@ func FromFile(path string, opts ...FileOption) Provider {
 		return processKey(data, cfg.trimWhitespace, cfg.decoder)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
 
 // processKey handles common key processing: trimming whitespace, decoding,
 // and creating a cleanup function.

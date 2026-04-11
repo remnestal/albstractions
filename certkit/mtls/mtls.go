@@ -1,10 +1,8 @@
-// Package mtls provides utilities for configuring mutual TLS (mTLS).
+// Package mtls configures mutual TLS (mTLS).
 //
-// [NewTLSConfig] builds a [crypto/tls.Config] suitable for both server and
-// client roles from three [keyloader.Provider] values — certificate, private
-// key, and CA certificate. The resulting config enforces TLS 1.3 and mutual
-// authentication. Load key material with the keyloader package and generate
-// test certificates with the pki package.
+// [NewTLSConfig] builds a *tls.Config for both server and client roles from
+// three [keyloader.Provider] values — certificate, key, and CA — enforcing
+// TLS 1.3 and mutual authentication.
 package mtls
 
 import (
@@ -19,6 +17,7 @@ import (
 type Option func(*tls.Config)
 
 // WithServerName sets the ServerName field on the returned tls.Config.
+//
 // This is not required when using stdlib http.Client — the Transport sets
 // ServerName automatically from the request URL. It is useful for raw
 // tls.Dial calls or gRPC where no URL parsing occurs.
@@ -28,10 +27,12 @@ func WithServerName(name string) Option {
 	}
 }
 
-// NewTLSConfig creates a tls.Config suitable for use as both a server and client
-// in an mTLS setup. ClientCAs and RootCAs are set to the same pool since all
-// peers share a single CA. The Go TLS stack uses the relevant fields depending
-// on which role the connection takes.
+// NewTLSConfig creates a tls.Config suitable for use as both a server and
+// client in an mTLS setup.
+//
+// ClientCAs and RootCAs are set to the same pool since all peers share a
+// single CA. The Go TLS stack uses the relevant fields depending on which
+// role the connection takes.
 //
 // Note: the free functions from cert, key, and ca zero the raw PEM bytes after
 // parsing, but X509KeyPair copies key material internally — the parsed private
