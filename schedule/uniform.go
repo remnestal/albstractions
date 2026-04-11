@@ -17,14 +17,17 @@ type Uniform struct {
 // UniformOption configures a Uniform schedule.
 type UniformOption func(*Uniform)
 
-// WithSource sets the random source used to generate delays. Useful for
-// deterministic tests. If not set, a random seed is used.
+// WithSource sets the random source used to generate delays.
+//
+// Useful for deterministic tests. If not set, a random seed is used.
 func WithSource(src rand.Source) UniformOption {
 	return func(u *Uniform) { u.rng = rand.New(src) }
 }
 
-// NewUniform returns a Schedule that picks a random delay in [lo, hi] on each
-// call. Panics if lo < 0 or hi < lo.
+// NewUniform returns a [Schedule] that picks a random delay in [lo, hi] on
+// each call.
+//
+// Panics if lo < 0 or hi < lo.
 func NewUniform(lo, hi time.Duration, opts ...UniformOption) *Uniform {
 	if lo < 0 {
 		panic("schedule.NewUniform: lo must be >= 0")

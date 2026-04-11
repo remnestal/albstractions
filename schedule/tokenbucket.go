@@ -16,18 +16,19 @@ type Reservation interface {
 // Limiter hands out reservations against a rate limit.
 //
 // It is satisfied by *golang.org/x/time/rate.Limiter, so a limiter can be
-// passed straight to NewTokenBucket without this module depending on
+// passed straight to [NewTokenBucket] without this module depending on
 // golang.org/x/time.
 //
 // The reservation is a type parameter because Reserve returns a concrete type.
-// A plain Reserve() Reservation method would match no real limiter, since Go
+// A plain Reserve() [Reservation] method would match no real limiter, since Go
 // does not treat a concrete return type as satisfying an interface one.
 type Limiter[R Reservation] interface {
 	Reserve() R
 }
 
-// TokenBucket adapts a rate limiter to the Schedule interface. Each call to
-// Next reserves capacity and returns the time to wait until it is available.
+// TokenBucket adapts a [Limiter] to the [Schedule] interface. Each call to
+// [TokenBucket.Next] reserves capacity and returns the time to wait until it
+// is available.
 //
 // Note: reservations are consumed on every Next call regardless of whether the
 // caller actually waits. Rapid successive calls will accumulate growing delays
@@ -36,7 +37,7 @@ type TokenBucket[R Reservation] struct {
 	limiter Limiter[R]
 }
 
-// NewTokenBucket returns a Schedule backed by the given limiter.
+// NewTokenBucket returns a [Schedule] backed by the given limiter.
 func NewTokenBucket[R Reservation](limiter Limiter[R]) *TokenBucket[R] {
 	return &TokenBucket[R]{limiter: limiter}
 }

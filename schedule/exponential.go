@@ -8,9 +8,10 @@ import (
 
 // Exponential implements an exponential backoff schedule.
 //
-// Each call to Next multiplies the current delay by the configured factor until it reaches
-// maxDelay. The delay is stateful — it grows across successive calls.
-// Call Reset to start a new backoff sequence.
+// Each call to [Exponential.Next] multiplies the current delay by the
+// configured factor until it reaches maxDelay. The delay is stateful — it
+// grows across successive calls. Call [Exponential.Reset] to start a new
+// backoff sequence.
 type Exponential struct {
 	base     time.Duration
 	maxDelay time.Duration
@@ -24,13 +25,16 @@ type Exponential struct {
 type ExponentialOption func(*Exponential)
 
 // WithFactor sets the growth multiplier applied on each call to Next.
+//
 // The default is 2.0.
 func WithFactor(f float64) ExponentialOption {
 	return func(e *Exponential) { e.factor = f }
 }
 
-// NewExponential returns an Exponential schedule starting at base and capped at
-// maxDelay. Panics if base ≤ 0 or maxDelay < base.
+// NewExponential returns an [Exponential] schedule starting at base and capped
+// at maxDelay.
+//
+// Panics if base <= 0 or maxDelay < base.
 func NewExponential(base, maxDelay time.Duration, opts ...ExponentialOption) *Exponential {
 	if base <= 0 {
 		panic("schedule.NewExponential: base must be positive")
@@ -60,8 +64,9 @@ func (e *Exponential) Next() time.Duration {
 	return d
 }
 
-// Reset restores the delay to the base value. Call this before starting a new
-// backoff sequence.
+// Reset restores the delay to the base value.
+//
+// Call this before starting a new backoff sequence.
 func (e *Exponential) Reset() {
 	e.mu.Lock()
 	e.current = e.base

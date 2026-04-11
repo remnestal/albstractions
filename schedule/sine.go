@@ -13,7 +13,7 @@ import (
 //
 // The phase is derived from the wall clock, not from call count. Two calls made
 // at the same instant return the same delay, and the oscillation continues
-// independently of how often Next is called.
+// independently of how often [Sine.Next] is called.
 type Sine struct {
 	lo      time.Duration
 	hi      time.Duration
@@ -27,14 +27,17 @@ type Sine struct {
 // SineOption configures a Sine schedule.
 type SineOption func(*Sine)
 
-// WithClock overrides the clock function used to measure elapsed time. Useful
-// for deterministic tests.
+// WithClock overrides the clock function used to measure elapsed time.
+//
+// Useful for deterministic tests.
 func WithClock(fn func() time.Time) SineOption {
 	return func(s *Sine) { s.clockFn = fn }
 }
 
-// NewSine returns a Schedule whose delays oscillate between lo and hi over the
-// given period. Panics if lo < 0, hi < lo, or period <= 0.
+// NewSine returns a [Schedule] whose delays oscillate between lo and hi over
+// the given period.
+//
+// Panics if lo < 0, hi < lo, or period <= 0.
 func NewSine(lo, hi, period time.Duration, opts ...SineOption) *Sine {
 	if lo < 0 {
 		panic("schedule.NewSine: lo must be >= 0")

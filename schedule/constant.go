@@ -7,7 +7,8 @@ type Constant struct {
 	delay time.Duration
 }
 
-// NewConstant returns a Schedule that always waits d between events.
+// NewConstant returns a [Schedule] that always waits d between events.
+//
 // Panics if d < 0.
 func NewConstant(d time.Duration) *Constant {
 	if d < 0 {
