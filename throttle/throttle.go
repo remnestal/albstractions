@@ -19,11 +19,13 @@ type Schedule interface {
 	Next() time.Duration
 }
 
-// Throttle paces calls according to a Schedule. Safe for concurrent use.
+// Throttle paces calls according to a [Schedule].
 //
 // By default a Throttle runs fn invocations serially (one at a time). Use
-// WithMaxInflight to allow more concurrency, or WithMaxInflight(Unbounded)
+// [WithMaxInflight] to allow more concurrency, or WithMaxInflight([Unbounded])
 // to remove the limit entirely.
+//
+// Throttle is safe for concurrent use.
 type Throttle struct {
 	schedule    Schedule
 	mu          sync.Mutex
@@ -34,12 +36,16 @@ type Throttle struct {
 // Option configures a Throttle.
 type Option func(*Throttle)
 
-// Unbounded, passed to WithMaxInflight, disables the in-flight cap.
+// Unbounded, passed to [WithMaxInflight], disables the in-flight cap.
 const Unbounded = -1
 
 // WithMaxInflight caps the number of fn invocations in flight on a Throttle
-// at n. Callers beyond the cap block (honouring ctx) until a slot frees.
-// Pass Unbounded for no limit. Panics if n == 0 or n < -1. Default: 1 (serial).
+// at n.
+//
+// Callers beyond the cap block (honouring ctx) until a slot frees. Pass
+// [Unbounded] for no limit.
+//
+// Panics if n == 0 or n < -1. Default: 1 (serial).
 func WithMaxInflight(n int) Option {
 	if n == 0 || n < -1 {
 		panic("throttle.WithMaxInflight: n must be > 0 or Unbounded (-1)")
@@ -53,8 +59,9 @@ func WithMaxInflight(n int) Option {
 	}
 }
 
-// New returns a Throttle paced by s. By default invocations are serial;
-// pass WithMaxInflight to change this.
+// New returns a [Throttle] paced by s.
+//
+// By default invocations are serial; pass [WithMaxInflight] to change this.
 func New(s Schedule, opts ...Option) *Throttle {
 	t := &Throttle{
 		schedule: s,

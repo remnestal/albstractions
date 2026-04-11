@@ -5,18 +5,21 @@ import (
 	"net/http"
 )
 
-// RoundTripper is an http.RoundTripper that paces outbound requests using Do.
+// RoundTripper is an http.RoundTripper that paces outbound requests using
+// [Throttle.Do].
 //
-// Requests are spaced by the Throttle's schedule; use WithMaxInflight to control
-// how many may be in flight concurrently (default: 1).
+// Requests are spaced by the [Throttle]'s schedule; use [WithMaxInflight] to
+// control how many may be in flight concurrently (default: 1).
 type RoundTripper struct {
 	next http.RoundTripper
 	t    *Throttle
 }
 
-// NewRoundTripper returns a RoundTripper that paces requests through next using s.
+// NewRoundTripper returns a [RoundTripper] that paces requests through next
+// using s.
+//
 // If next is nil, http.DefaultTransport is used. Options are forwarded to the
-// underlying Throttle.
+// underlying [Throttle].
 func NewRoundTripper(next http.RoundTripper, s Schedule, opts ...Option) *RoundTripper {
 	if next == nil {
 		next = http.DefaultTransport
