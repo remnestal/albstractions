@@ -1,6 +1,6 @@
 # albstractions
 
-Small, focused Go modules for recurring service plumbing like throttling and certificates. Each one is versioned and importable on its own, dependency-free, and perfectly balanced, as all things should be.
+Small, focused Go modules for recurring service plumbing like throttling, lifecycle, and certificates. Each one is versioned and importable on its own, dependency-free, and perfectly balanced, as all things should be.
 
 ## Usage
 
@@ -18,6 +18,7 @@ go get github.com/remnestal/albstractions/schedule
 | [`schedule`](./schedule) | Delay strategies for throttling, rate-limiting, and backoff |
 | [`throttle`](./throttle) | Paces function and HTTP call cadence using a pluggable schedule |
 | [`certkit`](./certkit) | Certificate and key management: key loading, self-signed PKI, and mutual TLS helpers |
+| [`lifecycle`](./lifecycle) | Application lifecycle manager: goroutines, HTTP servers, graceful shutdown |
 
 ## Design
 
