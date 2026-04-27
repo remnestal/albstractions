@@ -148,6 +148,7 @@ Common types: `feat`, `fix`, `chore`, `refactor`, `test`, `docs`.
 ## Testing Conventions
  
 - Use `testify/assert` (non-fatal) and `testify/require` (fatal on failure).
+- Group tests by the function or method under test: one top-level `TestFoo` per exported symbol, with behaviour cases as `t.Run` subtests inside it.
 - Each subtest lives in its own `t.Run(...)` block with a concise descriptive name explaining the expected behaviour.
 - All tests must be parallelisable — call `t.Parallel()` at the top of every test and subtest.
 - Use table-driven tests when multiple cases share the same structure but differ only in inputs/outputs.
