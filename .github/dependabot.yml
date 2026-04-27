@@ -19,3 +19,8 @@ updates:
     directory: /lifecycle
     schedule:
       interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /retry
+    schedule:
+      interval: weekly

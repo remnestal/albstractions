@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        module: [certkit, lifecycle, schedule, throttle]
+        module: [certkit, lifecycle, retry, schedule, throttle]
     steps:
       - uses: actions/checkout@v4
 
