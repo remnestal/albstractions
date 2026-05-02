@@ -39,19 +39,19 @@ hook runs `task verify`. Bypass for WIP with `git commit --no-verify`.
 find . -name go.mod | xargs -I{} dirname {} | xargs -I{} sh -c 'cd {} && go test ./...'
  
 # Run tests for a single module
-cd keyloader && go test ./...
+cd certkit && go test ./...
  
 # Run a single test
-cd keyloader && go test ./path/to/pkg -run TestFunctionName
+cd certkit && go test ./keyloader -run TestFunctionName
  
 # Run a single subtest
-cd keyloader && go test ./path/to/pkg -run TestFunctionName/subtest_name
+cd certkit && go test ./keyloader -run TestFunctionName/subtest_name
  
 # Run tests with race detector (always do this before tagging)
-cd keyloader && go test -race ./...
+cd certkit && go test -race ./...
  
 # Lint a module
-cd keyloader && golangci-lint run ./...
+cd certkit && golangci-lint run ./...
  
 # Lint all modules
 find . -name go.mod | xargs -I{} dirname {} | xargs -I{} sh -c 'cd {} && golangci-lint run ./...'
@@ -70,8 +70,11 @@ find . -name go.mod | xargs -I{} dirname {} | xargs -I{} sh -c 'cd {} && golangc
 9. Start versioning from `v0.1.0`.
 
 ## Inter-Module Dependencies
- 
-Some modules depend on others (e.g. `mtls` → `pki` → `keyloader`). When working locally:
+
+No module currently depends on another (`mtls`, `pki`, and `keyloader` are all
+packages inside the single `certkit` module, not separate `go.mod` roots).
+
+If a future module does depend on another, when working locally:
  
 - Use `replace` directives in `go.mod` to point at local paths during development.
 - **Remove all `replace` directives before tagging a release** — they must not appear in published modules.
@@ -86,7 +89,7 @@ Some modules depend on others (e.g. `mtls` → `pki` → `keyloader`). When work
 
 ## Release & Tagging
  
-Modules are tagged independently using the format `<module>/vX.Y.Z` (e.g. `keyloader/v1.2.0`). Go's toolchain resolves these natively.
+Modules are tagged independently using the format `<module>/vX.Y.Z` (e.g. `certkit/v1.2.0`). Go's toolchain resolves these natively.
  
 **Tagging checklist before a release:**
 1. All `replace` directives removed from `go.mod`.
@@ -98,7 +101,7 @@ Modules are tagged independently using the format `<module>/vX.Y.Z` (e.g. `keylo
 Follow semver strictly:
 - **Patch** (`v1.0.x`): bug fixes, no API change.
 - **Minor** (`v1.x.0`): new backwards-compatible functionality.
-- **Major** (`vX.0.0`): breaking API change. For v2+, the module path must include the major version suffix (e.g. `github.com/remnestal/albstractions/keyloader/v2`).
+- **Major** (`vX.0.0`): breaking API change. For v2+, the module path must include the major version suffix (e.g. `github.com/remnestal/albstractions/certkit/v2`).
  
 Do **not** retag an existing version. If something was wrong, release a new patch.
 
