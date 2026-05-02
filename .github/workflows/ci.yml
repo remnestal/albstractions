@@ -20,6 +20,14 @@ jobs:
         with:
           go-version-file: ${{ matrix.module }}/go.mod
 
+      - name: gofmt
+        working-directory: ${{ matrix.module }}
+        run: test -z "$(gofmt -l .)" || { echo "::error::not gofmt-clean"; gofmt -l .; exit 1; }
+
+      - name: tidy
+        working-directory: ${{ matrix.module }}
+        run: go mod tidy -diff
+
       - name: Test
         working-directory: ${{ matrix.module }}
         run: go test -race ./...
