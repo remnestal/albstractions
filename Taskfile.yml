@@ -27,6 +27,7 @@ tasks:
       - task: tidy:require
       - task: lint
       - task: test
+      - task: vulncheck
 
   lint:
     desc: Run golangci-lint in every module
@@ -66,6 +67,12 @@ tasks:
     cmds:
       - for: { var: MODULES }
         cmd: 'echo ">> tidy:require {{.ITEM}}" && cd {{.ITEM}} && go mod tidy -diff'
+
+  vulncheck:
+    desc: Run govulncheck in every module
+    cmds:
+      - for: { var: MODULES }
+        cmd: 'echo ">> vulncheck {{.ITEM}}" && cd {{.ITEM}} && PATH="$(go env GOPATH)/bin:$PATH" govulncheck ./...'
 
   hooks:install:
     desc: Enable the versioned pre-commit hook for this clone

@@ -9,6 +9,10 @@ set -e
 
 cd "$(git rev-parse --show-toplevel)"
 
+# go install-ed tools (govulncheck, etc.) live in GOPATH/bin, which is not
+# always on PATH in non-interactive shells invoked by git.
+export PATH="$(go env GOPATH)/bin:$PATH"
+
 if ! command -v task >/dev/null 2>&1; then
   echo "pre-commit: 'task' not found — install go-task or use --no-verify" >&2
   exit 1
