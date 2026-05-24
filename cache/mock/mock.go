@@ -1,0 +1,114 @@
+// Package mock provides a configurable test double for [cache.Cache], intended
+// for import by other projects' tests.
+package mock
+
+import (
+	"context"
+	"iter"
+	"sync"
+	"time"
+
+	"github.com/remnestal/albstractions/cache"
+)
+
+// Call records a single invocation of a [Backend] method.
+//
+// Val and TTL are set only for Set calls; they are zero for other operations.
+type Call[K comparable, V any] struct {
+	Op  string
+	Key K
+	Val V
+	TTL time.Duration
+}
+
+// Backend is a configurable [cache.Cache] test double.
+//
+// Set the exported function fields to control behaviour. An unset function
+// behaves as an empty cache: reads miss, writes and deletes succeed without
+// storing anything, and iteration yields nothing. Every call is recorded and
+// retrievable with [Backend.Calls].
+//
+// Backend is safe for concurrent use up to the behaviour of the configured
+// functions.
+type Backend[K comparable, V any] struct {
+	GetFunc    func(ctx context.Context, key K) (V, bool, error)
+	SetFunc    func(ctx context.Context, key K, val V, ttl time.Duration) (time.Time, error)
+	DeleteFunc func(ctx context.Context, key K) error
+	ItemsFunc  func() iter.Seq2[K, V]
+
+	mu    sync.Mutex
+	calls []Call[K, V]
+}
+
+var _ cache.Cache[int, int] = (*Backend[int, int])(nil)
+
+// Get implements [cache.Cache.Get], treating an error from GetFunc as a miss.
+func (b *Backend[K, V]) Get(key K) (V, bool) {
+	v, ok, err := b.GetContext(context.Background(), key)
+	if err != nil {
+		var zero V
+		return zero, false
+	}
+	return v, ok
+}
+
+// Set implements [cache.Cache.Set].
+func (b *Backend[K, V]) Set(key K, val V, ttl time.Duration) time.Time {
+	t, _ := b.SetContext(context.Background(), key, val, ttl)
+	return t
+}
+
+// Delete implements [cache.Cache.Delete].
+func (b *Backend[K, V]) Delete(key K) {
+	_ = b.DeleteContext(context.Background(), key)
+}
+
+// GetContext implements [cache.Cache.GetContext], delegating to GetFunc.
+func (b *Backend[K, V]) GetContext(ctx context.Context, key K) (V, bool, error) {
+	b.record(Call[K, V]{Op: "Get", Key: key})
+	if b.GetFunc != nil {
+		return b.GetFunc(ctx, key)
+	}
+	var zero V
+	return zero, false, nil
+}
+
+// SetContext implements [cache.Cache.SetContext], delegating to SetFunc.
+func (b *Backend[K, V]) SetContext(ctx context.Context, key K, val V, ttl time.Duration) (time.Time, error) {
+	b.record(Call[K, V]{Op: "Set", Key: key, Val: val, TTL: ttl})
+	if b.SetFunc != nil {
+		return b.SetFunc(ctx, key, val, ttl)
+	}
+	return time.Time{}, nil
+}
+
+// DeleteContext implements [cache.Cache.DeleteContext], delegating to DeleteFunc.
+func (b *Backend[K, V]) DeleteContext(ctx context.Context, key K) error {
+	b.record(Call[K, V]{Op: "Delete", Key: key})
+	if b.DeleteFunc != nil {
+		return b.DeleteFunc(ctx, key)
+	}
+	return nil
+}
+
+// Items implements [cache.Cache.Items], delegating to ItemsFunc.
+func (b *Backend[K, V]) Items() iter.Seq2[K, V] {
+	b.record(Call[K, V]{Op: "Items"})
+	if b.ItemsFunc != nil {
+		return b.ItemsFunc()
+	}
+	return func(func(K, V) bool) {}
+}
+
+// Calls returns a copy of the recorded calls in invocation order.
+func (b *Backend[K, V]) Calls() []Call[K, V] {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]Call[K, V](nil), b.calls...)
+}
+
+func (b *Backend[K, V]) record(c Call[K, V]) {
+	b.mu.Lock()
+	b.calls = append(b.calls, c)
+	b.mu.Unlock()
+}

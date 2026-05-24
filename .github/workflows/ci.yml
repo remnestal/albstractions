@@ -12,7 +12,7 @@ jobs:
     outputs:
       modules: ${{ steps.set.outputs.modules }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: set
         run: |
           modules=$(find . -name go.mod -not -path './.git/*' \
@@ -28,9 +28,9 @@ jobs:
       matrix:
         module: ${{ fromJSON(needs.discover.outputs.modules) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: ${{ matrix.module }}/go.mod
 
@@ -47,7 +47,7 @@ jobs:
         run: go test -race ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           install-mode: goinstall

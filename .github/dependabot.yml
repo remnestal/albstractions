@@ -29,3 +29,8 @@ updates:
     directory: /retry
     schedule:
       interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /cache
+    schedule:
+      interval: weekly
