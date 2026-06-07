@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"sync"
@@ -211,6 +212,10 @@ type flightGroup[K comparable, V any] struct {
 
 // Do runs fn for key, or waits for and returns the result of an in-flight call
 // for the same key.
+//
+// If fn panics, the in-flight entry is removed and waiters receive an error
+// instead of blocking forever; the panic is then re-raised on the calling
+// goroutine.
 func (g *flightGroup[K, V]) Do(key K, fn func() (V, error)) (V, error) {
 	g.mu.Lock()
 	if c, ok := g.m[key]; ok {
@@ -223,12 +228,23 @@ func (g *flightGroup[K, V]) Do(key K, fn func() (V, error)) (V, error) {
 	g.m[key] = c
 	g.mu.Unlock()
 
+	// Clean up and release waiters even if fn panics: a panicking loader must not
+	// wedge the key, or waiters and every future caller would block forever.
+	// Waiters receive the error; the panic is re-raised on this goroutine.
+	defer func() {
+		r := recover()
+		if r != nil {
+			c.err = fmt.Errorf("cache: read-through loader panicked: %v", r)
+		}
+		g.mu.Lock()
+		delete(g.m, key)
+		g.mu.Unlock()
+		c.wg.Done()
+		if r != nil {
+			panic(r)
+		}
+	}()
+
 	c.val, c.err = fn()
-	c.wg.Done()
-
-	g.mu.Lock()
-	delete(g.m, key)
-	g.mu.Unlock()
-
 	return c.val, c.err
 }

@@ -218,6 +218,140 @@ func TestWithSingleFlight(t *testing.T) {
 
 		assert.Equal(t, int64(1), calls.Load())
 	})
+
+	t.Run("shares the loader error with all waiters", func(t *testing.T) {
+		t.Parallel()
+		boom := errors.New("boom")
+		var calls atomic.Int64
+		entered := make(chan struct{}, 1)
+		release := make(chan struct{})
+		loader := func(context.Context, string) (int, error) {
+			calls.Add(1)
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-release
+			return 0, boom
+		}
+		rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+
+		const n = 10
+		var wg sync.WaitGroup
+		errs := make([]error, n)
+		for i := range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, _, err := rt.GetContext(context.Background(), "k")
+				errs[i] = err
+			}()
+		}
+		<-entered
+		time.Sleep(20 * time.Millisecond)
+		close(release)
+		wg.Wait()
+
+		assert.Equal(t, int64(1), calls.Load())
+		for _, err := range errs {
+			assert.ErrorIs(t, err, boom)
+		}
+	})
+
+	t.Run("loads again after the flight completes", func(t *testing.T) {
+		t.Parallel()
+		var calls atomic.Int64
+		loader := func(context.Context, string) (int, error) {
+			if calls.Add(1) == 1 {
+				return 0, cache.ErrCacheMiss
+			}
+			return 42, nil
+		}
+		rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+
+		_, ok := rt.Get("k")
+		assert.False(t, ok)
+		v, ok := rt.Get("k")
+		require.True(t, ok)
+		assert.Equal(t, 42, v)
+		assert.Equal(t, int64(2), calls.Load())
+	})
+
+	t.Run("a panicking loader does not wedge the key", func(t *testing.T) {
+		t.Parallel()
+		var calls atomic.Int64
+		loader := func(context.Context, string) (int, error) {
+			if calls.Add(1) == 1 {
+				panic("loader boom")
+			}
+			return 42, nil
+		}
+		rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+
+		assert.Panics(t, func() { rt.Get("k") })
+
+		// The key must not be wedged: a later load succeeds. Guard with a timeout
+		// so a regression (the in-flight entry leaking) fails fast instead of
+		// hanging the suite.
+		done := make(chan int, 1)
+		go func() {
+			v, _ := rt.Get("k")
+			done <- v
+		}()
+		select {
+		case v := <-done:
+			assert.Equal(t, 42, v)
+		case <-time.After(time.Second):
+			t.Fatal("Get deadlocked: a panicking load wedged the key")
+		}
+		assert.Equal(t, int64(2), calls.Load())
+	})
+
+	t.Run("waiters receive an error when the leader's load panics", func(t *testing.T) {
+		t.Parallel()
+		var calls atomic.Int64
+		entered := make(chan struct{}, 1)
+		release := make(chan struct{})
+		loader := func(context.Context, string) (int, error) {
+			calls.Add(1)
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-release
+			panic("loader boom")
+		}
+		rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+
+		const n = 10
+		var wg sync.WaitGroup
+		errs := make([]error, n)
+		for i := range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer func() { _ = recover() }() // the leader re-panics; absorb it
+				_, _, err := rt.GetContext(context.Background(), "k")
+				errs[i] = err
+			}()
+		}
+		<-entered
+		time.Sleep(20 * time.Millisecond)
+		close(release)
+		wg.Wait()
+
+		// Only the leader ran the loader; every waiter received an error rather
+		// than a spurious (zero, true) hit. The leader's slot stays nil because
+		// its GetContext panicked instead of returning.
+		assert.Equal(t, int64(1), calls.Load())
+		got := 0
+		for _, err := range errs {
+			if err != nil {
+				got++
+			}
+		}
+		assert.Equal(t, n-1, got)
+	})
 }
 
 func TestWithMissError(t *testing.T) {
