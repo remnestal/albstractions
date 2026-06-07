@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// Integer is the set of integer key types supported by [ModuloShard].
-type Integer interface {
+// integer is the set of integer key types supported by [ModuloShard].
+type integer interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64 |
 		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr
 }
@@ -32,7 +32,7 @@ func HashShard[K comparable]() func(K) uint64 {
 //
 // It suits dense or sequential identifiers; for sparse or adversarial keys
 // prefer [HashShard].
-func ModuloShard[K Integer]() func(K) uint64 {
+func ModuloShard[K integer]() func(K) uint64 {
 	return func(key K) uint64 {
 		return uint64(key)
 	}
