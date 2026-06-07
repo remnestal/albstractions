@@ -2,6 +2,7 @@ package cache_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -297,4 +298,44 @@ func TestMemory_Close(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, 1, v)
 	})
+}
+
+func TestMemory_Concurrent(t *testing.T) {
+	t.Parallel()
+
+	// Hammer the cache from many goroutines with a background janitor running, so
+	// the -race detector exercises every lock path on the core type.
+	c := cache.NewMemory[int, int](cache.WithCleanupInterval(time.Millisecond))
+	defer func() { _ = c.Close() }()
+
+	const goroutines = 8
+	const ops = 500
+	var wg sync.WaitGroup
+	for g := range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range ops {
+				key := (g*ops + i) % 64
+				switch i % 4 {
+				case 0:
+					c.Set(key, i, cache.After(time.Minute))
+				case 1:
+					c.Get(key)
+				case 2:
+					c.Delete(key)
+				default:
+					for range c.Items() {
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Still usable after the storm.
+	c.Set(1, 1, cache.Never)
+	v, ok := c.Get(1)
+	assert.True(t, ok)
+	assert.Equal(t, 1, v)
 }

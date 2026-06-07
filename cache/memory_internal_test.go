@@ -110,3 +110,17 @@ func TestMemoryBackgroundCleanup(t *testing.T) {
 		return len(m.m) == 0
 	}, time.Second, 5*time.Millisecond)
 }
+
+func TestMemoryBackgroundRebuild(t *testing.T) {
+	t.Parallel()
+
+	m := NewMemory[string, int](WithRebuildInterval(5 * time.Millisecond))
+	defer func() { _ = m.Close() }()
+	m.Set("dead", 1, After(time.Nanosecond))
+
+	assert.Eventually(t, func() bool {
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		return len(m.m) == 0
+	}, time.Second, 5*time.Millisecond)
+}

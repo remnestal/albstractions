@@ -57,6 +57,19 @@ func TestModuloShard(t *testing.T) {
 		m := cache.ModuloShard[int]()
 		assert.Equal(t, uint64(5), m(5))
 	})
+
+	t.Run("routes every key to a retrievable backend", func(t *testing.T) {
+		t.Parallel()
+		s := cache.NewSharded[int, int](8, cache.ModuloShard[int](), memoryShards[int, int]())
+		for i := range 100 {
+			s.Set(i, i*2, cache.Never)
+		}
+		for i := range 100 {
+			v, ok := s.Get(i)
+			require.True(t, ok)
+			assert.Equal(t, i*2, v)
+		}
+	})
 }
 
 func TestNewSharded(t *testing.T) {
@@ -204,6 +217,14 @@ func TestSharded_Close(t *testing.T) {
 		})
 		require.NoError(t, s.Close())
 		assert.Equal(t, int64(3), closes.Load())
+	})
+
+	t.Run("skips backends that are not io.Closer", func(t *testing.T) {
+		t.Parallel()
+		s := cache.NewSharded[string, int](3, cache.HashShard[string](), func() cache.Cache[string, int] {
+			return &mock.Backend[string, int]{}
+		})
+		assert.NoError(t, s.Close())
 	})
 }
 
