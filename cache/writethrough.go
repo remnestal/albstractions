@@ -79,8 +79,8 @@ func (w *WriteThrough[K, V]) Get(key K) (V, bool) {
 
 // Set implements [Cache.Set]. It writes through, returning the front's expiry
 // (or the zero time if the backing write fails).
-func (w *WriteThrough[K, V]) Set(key K, val V, ttl time.Duration) time.Time {
-	t, _ := w.SetContext(context.Background(), key, val, ttl)
+func (w *WriteThrough[K, V]) Set(key K, val V, exp Expiry) time.Time {
+	t, _ := w.SetContext(context.Background(), key, val, exp)
 	return t
 }
 
@@ -97,11 +97,11 @@ func (w *WriteThrough[K, V]) GetContext(ctx context.Context, key K) (V, bool, er
 
 // SetContext implements [Cache.SetContext], writing to the backing store before
 // the front cache and leaving the front untouched if the write fails.
-func (w *WriteThrough[K, V]) SetContext(ctx context.Context, key K, val V, ttl time.Duration) (time.Time, error) {
+func (w *WriteThrough[K, V]) SetContext(ctx context.Context, key K, val V, exp Expiry) (time.Time, error) {
 	if err := w.writer(ctx, key, val); err != nil {
 		return time.Time{}, err
 	}
-	return w.front.SetContext(ctx, key, val, ttl)
+	return w.front.SetContext(ctx, key, val, exp)
 }
 
 // DeleteContext implements [Cache.DeleteContext], deleting from the backing

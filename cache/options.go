@@ -6,8 +6,8 @@ import "time"
 type MemoryOption func(*memoryConfig)
 
 // memoryConfig holds the resolved settings for a [Memory]. Its zero value is a
-// cache with no TTL bounds, no default expiry, and no background maintenance;
-// [NewMemory] seeds defaultTTL with [NoExpiration] before applying options.
+// cache with no TTL bounds, no configured default (so [Default] resolves to
+// [Never]), and no background maintenance.
 type memoryConfig struct {
 	defaultTTL      time.Duration
 	minTTL          time.Duration

@@ -29,13 +29,12 @@ type Cache[K comparable, V any] interface {
 	// expired, or the backend errored.
 	Get(key K) (V, bool)
 
-	// Set stores val for key under ttl and returns the resulting absolute
-	// expiry, or the zero time if the entry never expires.
+	// Set stores val for key with the given [Expiry] and returns the resulting
+	// absolute expiry, or the zero time if the entry never expires.
 	//
-	// ttl is a positive duration or one of the sentinels [DefaultTTL],
-	// [NoExpiration], or [KeepTTL]; see each for resolution against the
-	// configured bounds.
-	Set(key K, val V, ttl time.Duration) time.Time
+	// exp is an [After] or [At] value, or one of [Never], [Default], or [Keep];
+	// see [Expiry] for how each resolves against the configured bounds.
+	Set(key K, val V, exp Expiry) time.Time
 
 	// Delete removes key, if present.
 	Delete(key K)
@@ -52,10 +51,11 @@ type Cache[K comparable, V any] interface {
 	// miss (false, nil).
 	GetContext(ctx context.Context, key K) (V, bool, error)
 
-	// SetContext stores val for key under ttl and returns the resulting expiry.
+	// SetContext stores val for key with the given [Expiry] and returns the
+	// resulting expiry.
 	//
-	// See [Cache.Set] for the meaning of ttl and the returned time.
-	SetContext(ctx context.Context, key K, val V, ttl time.Duration) (time.Time, error)
+	// See [Cache.Set] for the meaning of exp and the returned time.
+	SetContext(ctx context.Context, key K, val V, exp Expiry) (time.Time, error)
 
 	// DeleteContext removes key, if present.
 	DeleteContext(ctx context.Context, key K) error

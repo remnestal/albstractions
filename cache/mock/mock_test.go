@@ -58,7 +58,7 @@ func TestBackend_SetContext(t *testing.T) {
 	t.Run("succeeds without storing by default", func(t *testing.T) {
 		t.Parallel()
 		b := &mock.Backend[string, int]{}
-		exp, err := b.SetContext(context.Background(), "k", 1, time.Hour)
+		exp, err := b.SetContext(context.Background(), "k", 1, cache.After(time.Hour))
 		require.NoError(t, err)
 		assert.True(t, exp.IsZero())
 	})
@@ -67,11 +67,11 @@ func TestBackend_SetContext(t *testing.T) {
 		t.Parallel()
 		boom := errors.New("boom")
 		b := &mock.Backend[string, int]{
-			SetFunc: func(context.Context, string, int, time.Duration) (time.Time, error) {
+			SetFunc: func(context.Context, string, int, cache.Expiry) (time.Time, error) {
 				return time.Time{}, boom
 			},
 		}
-		_, err := b.SetContext(context.Background(), "k", 1, time.Hour)
+		_, err := b.SetContext(context.Background(), "k", 1, cache.After(time.Hour))
 		assert.ErrorIs(t, err, boom)
 	})
 }
@@ -129,7 +129,7 @@ func TestBackend_Calls(t *testing.T) {
 	t.Run("records each call in order", func(t *testing.T) {
 		t.Parallel()
 		b := &mock.Backend[string, int]{}
-		b.Set("k", 5, time.Minute)
+		b.Set("k", 5, cache.After(time.Minute))
 		b.Get("k")
 		b.Delete("k")
 
@@ -137,7 +137,7 @@ func TestBackend_Calls(t *testing.T) {
 		require.Len(t, calls, 3)
 		assert.Equal(t, "Set", calls[0].Op)
 		assert.Equal(t, 5, calls[0].Val)
-		assert.Equal(t, time.Minute, calls[0].TTL)
+		assert.Equal(t, cache.After(time.Minute), calls[0].Exp)
 		assert.Equal(t, "Get", calls[1].Op)
 		assert.Equal(t, "Delete", calls[2].Op)
 	})

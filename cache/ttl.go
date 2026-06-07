@@ -2,38 +2,85 @@ package cache
 
 import "time"
 
-// Sentinel TTL values accepted by [Cache.Set] and [Cache.SetContext] in place
-// of a positive duration.
+// Expiry specifies when an entry passed to [Cache.Set] or [Cache.SetContext]
+// expires.
+//
+// Construct one with [After] (a relative duration) or [At] (an absolute time),
+// or use the package values [Never], [Default], and [Keep]. The zero value is
+// [Default].
+type Expiry struct {
+	kind expiryKind
+	dur  time.Duration
+	at   time.Time
+}
+
+// expiryKind enumerates the variants of [Expiry]. Its zero value is the
+// [Default] variant, so the zero [Expiry] is [Default].
+type expiryKind uint8
+
 const (
-	// DefaultTTL selects the TTL configured with [WithDefaultTTL], or no expiry
-	// if none was configured.
-	DefaultTTL time.Duration = 0
-
-	// NoExpiration stores an entry that never expires.
-	NoExpiration time.Duration = -1
-
-	// KeepTTL replaces an entry's value while preserving its current expiry.
-	//
-	// If the key is absent the new entry never expires, matching Redis KEEPTTL.
-	KeepTTL time.Duration = -2
+	expiryDefault expiryKind = iota
+	expiryNever
+	expiryKeep
+	expiryAfter
+	expiryAt
 )
 
-// WithDefaultTTL sets the TTL applied when [Cache.Set] is called with
-// [DefaultTTL].
+// After returns an [Expiry] that expires the entry the given duration after it
+// is set.
 //
-// Without it, [DefaultTTL] means no expiry.
+// The duration is clamped to the bounds set by [WithMinTTL] and [WithMaxTTL]. A
+// duration that is zero or has already elapsed expires the entry immediately,
+// subject to [WithMinTTL].
+func After(d time.Duration) Expiry {
+	return Expiry{kind: expiryAfter, dur: d}
+}
+
+// At returns an [Expiry] that expires the entry at the given absolute time.
 //
-// Panics unless d is a positive duration or [NoExpiration].
+// The implied lifetime (t minus the moment of the set) is clamped to the bounds
+// set by [WithMinTTL] and [WithMaxTTL]. A t at or before the set expires the
+// entry immediately, subject to [WithMinTTL].
+func At(t time.Time) Expiry {
+	return Expiry{kind: expiryAt, at: t}
+}
+
+// Never is the [Expiry] for an entry that does not expire.
+//
+// With [WithMaxTTL] configured no entry can be permanent: Never resolves to the
+// moment of the set plus the maximum.
+var Never = Expiry{kind: expiryNever}
+
+// Default is the [Expiry] that uses the duration configured with
+// [WithDefaultTTL], or [Never] if none was configured.
+//
+// Default is the zero value of [Expiry].
+var Default = Expiry{kind: expiryDefault}
+
+// Keep is the [Expiry] that replaces an entry's value while preserving its
+// current expiry.
+//
+// If the key is absent or already expired there is nothing to preserve, so Keep
+// falls back to [Default].
+var Keep = Expiry{kind: expiryKeep}
+
+// WithDefaultTTL sets the duration applied when an entry is set with [Default].
+//
+// Without it, [Default] resolves to [Never].
+//
+// Panics if d is not positive.
 func WithDefaultTTL(d time.Duration) MemoryOption {
-	if d == DefaultTTL || d < NoExpiration {
-		panic("cache.WithDefaultTTL: ttl must be positive or NoExpiration")
+	if d <= 0 {
+		panic("cache.WithDefaultTTL: ttl must be positive")
 	}
 	return func(c *memoryConfig) { c.defaultTTL = d }
 }
 
-// WithMinTTL sets a lower bound to which positive TTLs are clamped.
+// WithMinTTL sets a lower bound on an entry's lifetime; a shorter lifetime is
+// clamped up to it.
 //
-// A zero bound (the default) imposes no floor. Sentinel TTLs are never clamped.
+// A zero bound (the default) imposes no floor. It applies to [After], [At], and
+// [Default]; [Keep] preserves the existing expiry and is never re-clamped.
 //
 // Panics if d is negative.
 func WithMinTTL(d time.Duration) MemoryOption {
@@ -43,10 +90,12 @@ func WithMinTTL(d time.Duration) MemoryOption {
 	return func(c *memoryConfig) { c.minTTL = d }
 }
 
-// WithMaxTTL sets an upper bound to which positive TTLs are clamped.
+// WithMaxTTL sets an upper bound on an entry's lifetime; a longer lifetime is
+// clamped down to it.
 //
-// A zero bound (the default) imposes no ceiling. Sentinel TTLs are never
-// clamped.
+// A zero bound (the default) imposes no ceiling. It applies to every expiry
+// except [Keep], including [Never]: with a maximum set, no entry can be
+// permanent. [Keep] preserves the existing expiry and is never re-clamped.
 //
 // Panics if d is negative.
 func WithMaxTTL(d time.Duration) MemoryOption {
@@ -56,29 +105,62 @@ func WithMaxTTL(d time.Duration) MemoryOption {
 	return func(c *memoryConfig) { c.maxTTL = d }
 }
 
-// resolveExpiry converts a requested ttl into an absolute expiry, returning the
-// zero time for an entry that never expires.
+// resolveExpiry converts exp into an absolute expiry, returning the zero time
+// for an entry that never expires.
 //
 // found and existing describe the entry currently stored under the key and are
-// consulted only to honour [KeepTTL].
-func (c *memoryConfig) resolveExpiry(ttl time.Duration, now, existing time.Time, found bool) time.Time {
-	switch ttl {
-	case KeepTTL:
+// consulted only to honour [Keep]. The resolution chain is
+// Keep -> Default -> Never/After/At, then the requested lifetime is clamped.
+func (c *memoryConfig) resolveExpiry(exp Expiry, now, existing time.Time, found bool) time.Time {
+	switch exp.kind {
+	case expiryKeep:
+		// Preserve the existing expiry as-is (already bounded when it was set),
+		// or fall back to Default when there is nothing to preserve.
 		if found {
 			return existing
 		}
-		return time.Time{}
-	case DefaultTTL:
-		ttl = c.defaultTTL
+		return c.resolveDefault(now)
+	case expiryDefault:
+		return c.resolveDefault(now)
+	case expiryNever:
+		return c.clampNever(now)
+	case expiryAt:
+		return c.clampLifetime(now, exp.at.Sub(now))
+	default: // expiryAfter
+		return c.clampLifetime(now, exp.dur)
 	}
-	if ttl <= 0 {
-		return time.Time{}
+}
+
+// resolveDefault resolves [Default]: the configured default duration, or [Never]
+// when none is configured.
+func (c *memoryConfig) resolveDefault(now time.Time) time.Time {
+	if c.defaultTTL > 0 {
+		return c.clampLifetime(now, c.defaultTTL)
 	}
-	if c.minTTL > 0 && ttl < c.minTTL {
-		ttl = c.minTTL
+	return c.clampNever(now)
+}
+
+// clampNever resolves [Never], honouring an upper bound: with a maximum set, no
+// entry can be permanent.
+func (c *memoryConfig) clampNever(now time.Time) time.Time {
+	if c.maxTTL > 0 {
+		return now.Add(c.maxTTL)
 	}
-	if c.maxTTL > 0 && ttl > c.maxTTL {
-		ttl = c.maxTTL
+	return time.Time{}
+}
+
+// clampLifetime clamps a requested lifetime to the configured [min, max] and
+// returns the resulting absolute expiry. A non-positive result (an elapsed or
+// floored-away lifetime) expires the entry immediately.
+func (c *memoryConfig) clampLifetime(now time.Time, life time.Duration) time.Time {
+	if c.minTTL > 0 && life < c.minTTL {
+		life = c.minTTL
 	}
-	return now.Add(ttl)
+	if c.maxTTL > 0 && life > c.maxTTL {
+		life = c.maxTTL
+	}
+	if life <= 0 {
+		return now
+	}
+	return now.Add(life)
 }

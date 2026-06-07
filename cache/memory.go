@@ -43,7 +43,7 @@ var _ Cache[int, int] = (*Memory[int, int])(nil)
 //
 // Panics if a configured minimum TTL exceeds the configured maximum.
 func NewMemory[K comparable, V any](opts ...MemoryOption) *Memory[K, V] {
-	cfg := memoryConfig{defaultTTL: NoExpiration}
+	cfg := memoryConfig{}
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -76,13 +76,13 @@ func (m *Memory[K, V]) GetContext(_ context.Context, key K) (V, bool, error) {
 }
 
 // Set implements [Cache.Set].
-func (m *Memory[K, V]) Set(key K, val V, ttl time.Duration) time.Time {
-	return m.set(key, val, ttl)
+func (m *Memory[K, V]) Set(key K, val V, exp Expiry) time.Time {
+	return m.set(key, val, exp)
 }
 
 // SetContext implements [Cache.SetContext]. It never returns an error.
-func (m *Memory[K, V]) SetContext(_ context.Context, key K, val V, ttl time.Duration) (time.Time, error) {
-	return m.set(key, val, ttl), nil
+func (m *Memory[K, V]) SetContext(_ context.Context, key K, val V, exp Expiry) (time.Time, error) {
+	return m.set(key, val, exp), nil
 }
 
 // Delete implements [Cache.Delete].
@@ -147,17 +147,17 @@ func (m *Memory[K, V]) lookup(key K) (V, bool) {
 	return e.value, true
 }
 
-// set stores val under key, resolving ttl against the configured bounds and the
+// set stores val under key, resolving exp against the configured bounds and the
 // existing entry, and returns the resulting expiry.
-func (m *Memory[K, V]) set(key K, val V, ttl time.Duration) time.Time {
+func (m *Memory[K, V]) set(key K, val V, exp Expiry) time.Time {
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.m[key]
-	// An expired-but-unswept entry counts as absent, so KeepTTL never preserves
-	// a stale past expiry.
+	// An expired-but-unswept entry counts as absent, so Keep never preserves a
+	// stale past expiry.
 	found := ok && !expired(existing.expiresAt, now)
-	expiresAt := m.cfg.resolveExpiry(ttl, now, existing.expiresAt, found)
+	expiresAt := m.cfg.resolveExpiry(exp, now, existing.expiresAt, found)
 	m.m[key] = entry[V]{value: val, expiresAt: expiresAt}
 	return expiresAt
 }

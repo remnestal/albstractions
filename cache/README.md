@@ -13,12 +13,12 @@ The in-memory `Memory`, every wrapper, and any backend you write all satisfy one
 ```go
 type Cache[K comparable, V any] interface {
     Get(key K) (V, bool)
-    Set(key K, val V, ttl time.Duration) time.Time
+    Set(key K, val V, exp Expiry) time.Time
     Delete(key K)
     Items() iter.Seq2[K, V]
 
     GetContext(ctx context.Context, key K) (V, bool, error)
-    SetContext(ctx context.Context, key K, val V, ttl time.Duration) (time.Time, error)
+    SetContext(ctx context.Context, key K, val V, exp Expiry) (time.Time, error)
     DeleteContext(ctx context.Context, key K) error
 }
 ```
@@ -40,23 +40,26 @@ c := cache.NewMemory[string, []byte](
 )
 defer c.Close()
 
-c.Set("token", payload, cache.DefaultTTL)  // expires in 5m
-c.Set("config", data, cache.NoExpiration)  // never expires
+c.Set("token", payload, cache.Default)  // expires in 5m
+c.Set("config", data, cache.Never)      // never expires
 if v, ok := c.Get("token"); ok {
     use(v)
 }
 ```
 
-## TTL
+## Expiry
 
-`Set` takes a positive duration or a sentinel and returns the resulting absolute expiry (a zero `time.Time` means "never"). Positive durations are clamped to the bounds set by `WithMinTTL` and `WithMaxTTL`.
+`Set` takes an `Expiry` and returns the resulting absolute expiry (a zero `time.Time` means "never"):
 
-| Value | Meaning |
-|-------|---------|
-| a positive `time.Duration` | expire after that long, clamped to the configured bounds |
-| `DefaultTTL` | use the TTL from `WithDefaultTTL`, or never if unset |
-| `NoExpiration` | never expire |
-| `KeepTTL` | replace the value but keep the existing entry's expiry |
+| Expiry | Meaning |
+|--------|---------|
+| `After(d)` | expire `d` after the set, clamped to the configured bounds |
+| `At(t)` | expire at the absolute time `t`; a past `t` expires immediately |
+| `Never` | never expire |
+| `Default` | use the duration from `WithDefaultTTL`, or `Never` if none is set |
+| `Keep` | replace the value, keep the existing expiry (or `Default` if the key is absent) |
+
+`WithMinTTL` and `WithMaxTTL` bound an entry's lifetime. The maximum is a hard ceiling: with it set, even `Never` resolves to `now + max`, so no entry can be permanent. `Keep` preserves an existing expiry and is never re-clamped.
 
 ## Sharding
 

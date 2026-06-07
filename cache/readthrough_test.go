@@ -67,7 +67,7 @@ func TestReadThrough_GetContext(t *testing.T) {
 		var calls atomic.Int64
 		loader := func(context.Context, string) (int, error) { calls.Add(1); return 0, nil }
 		front := cache.NewMemory[string, int]()
-		front.Set("k", 1, cache.NoExpiration)
+		front.Set("k", 1, cache.Never)
 		rt := cache.NewReadThrough[string, int](front, loader)
 
 		v, ok, err := rt.GetContext(context.Background(), "k")
@@ -102,7 +102,7 @@ func TestReadThrough_Set(t *testing.T) {
 		t.Parallel()
 		front := cache.NewMemory[string, int]()
 		rt := cache.NewReadThrough[string, int](front, constLoader[string](0, nil))
-		rt.Set("k", 3, cache.NoExpiration)
+		rt.Set("k", 3, cache.Never)
 		v, ok := front.Get("k")
 		assert.True(t, ok)
 		assert.Equal(t, 3, v)
@@ -115,7 +115,7 @@ func TestReadThrough_Delete(t *testing.T) {
 	t.Run("passes through to the front", func(t *testing.T) {
 		t.Parallel()
 		front := cache.NewMemory[string, int]()
-		front.Set("k", 1, cache.NoExpiration)
+		front.Set("k", 1, cache.Never)
 		rt := cache.NewReadThrough[string, int](front, constLoader[string](0, nil))
 		rt.Delete("k")
 		_, ok := front.Get("k")
@@ -129,7 +129,7 @@ func TestReadThrough_Items(t *testing.T) {
 	t.Run("iterates the front only", func(t *testing.T) {
 		t.Parallel()
 		front := cache.NewMemory[string, int]()
-		front.Set("a", 1, cache.NoExpiration)
+		front.Set("a", 1, cache.Never)
 		rt := cache.NewReadThrough[string, int](front, constLoader[string](0, nil))
 		got := map[string]int{}
 		for k, v := range rt.Items() {
@@ -146,7 +146,7 @@ func TestReadThrough_SetContext(t *testing.T) {
 		t.Parallel()
 		front := cache.NewMemory[string, int]()
 		rt := cache.NewReadThrough[string, int](front, constLoader[string](0, nil))
-		_, err := rt.SetContext(context.Background(), "k", 4, cache.NoExpiration)
+		_, err := rt.SetContext(context.Background(), "k", 4, cache.Never)
 		require.NoError(t, err)
 		v, ok := front.Get("k")
 		assert.True(t, ok)
@@ -160,7 +160,7 @@ func TestReadThrough_DeleteContext(t *testing.T) {
 	t.Run("passes through to the front", func(t *testing.T) {
 		t.Parallel()
 		front := cache.NewMemory[string, int]()
-		front.Set("k", 1, cache.NoExpiration)
+		front.Set("k", 1, cache.Never)
 		rt := cache.NewReadThrough[string, int](front, constLoader[string](0, nil))
 		require.NoError(t, rt.DeleteContext(context.Background(), "k"))
 		_, ok := front.Get("k")
@@ -377,7 +377,7 @@ func TestLoaderFromCache(t *testing.T) {
 	t.Run("returns the stored value", func(t *testing.T) {
 		t.Parallel()
 		src := cache.NewMemory[string, int]()
-		src.Set("k", 8, cache.NoExpiration)
+		src.Set("k", 8, cache.Never)
 		load := cache.LoaderFromCache[string, int](src)
 		v, err := load(context.Background(), "k")
 		require.NoError(t, err)

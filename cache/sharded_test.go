@@ -39,7 +39,7 @@ func TestHashShard(t *testing.T) {
 	t.Run("works as a Sharded algorithm", func(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[string, int](4, cache.HashShard[string](), memoryShards[string, int]())
-		s.Set("k", 1, cache.NoExpiration)
+		s.Set("k", 1, cache.Never)
 		v, ok := s.Get("k")
 		assert.True(t, ok)
 		assert.Equal(t, 1, v)
@@ -84,7 +84,7 @@ func TestNewSharded(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[int, int](8, cache.HashShard[int](), memoryShards[int, int]())
 		for i := range 100 {
-			s.Set(i, i*2, cache.NoExpiration)
+			s.Set(i, i*2, cache.Never)
 		}
 		for i := range 100 {
 			v, ok := s.Get(i)
@@ -100,7 +100,7 @@ func TestSharded_Get(t *testing.T) {
 	t.Run("returns a value stored through the same shard", func(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[string, int](4, cache.HashShard[string](), memoryShards[string, int]())
-		s.Set("k", 11, cache.NoExpiration)
+		s.Set("k", 11, cache.Never)
 		v, ok := s.Get("k")
 		require.True(t, ok)
 		assert.Equal(t, 11, v)
@@ -120,7 +120,7 @@ func TestSharded_Set(t *testing.T) {
 	t.Run("stores and returns the resolved expiry", func(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[string, int](4, cache.HashShard[string](), memoryShards[string, int]())
-		exp := s.Set("k", 1, time.Hour)
+		exp := s.Set("k", 1, cache.After(time.Hour))
 		assert.WithinDuration(t, time.Now().Add(time.Hour), exp, time.Second)
 	})
 }
@@ -131,7 +131,7 @@ func TestSharded_Delete(t *testing.T) {
 	t.Run("removes a key from its backend", func(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[string, int](4, cache.HashShard[string](), memoryShards[string, int]())
-		s.Set("k", 1, cache.NoExpiration)
+		s.Set("k", 1, cache.Never)
 		s.Delete("k")
 		_, ok := s.Get("k")
 		assert.False(t, ok)
@@ -145,7 +145,7 @@ func TestSharded_Items(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[int, int](4, cache.HashShard[int](), memoryShards[int, int]())
 		for i := range 100 {
-			s.Set(i, i, cache.NoExpiration)
+			s.Set(i, i, cache.Never)
 		}
 		got := map[int]int{}
 		for k, v := range s.Items() {
@@ -175,7 +175,7 @@ func TestSharded_GetContext(t *testing.T) {
 	t.Run("delegates to the routed backend", func(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[string, int](4, cache.HashShard[string](), memoryShards[string, int]())
-		_, err := s.SetContext(context.Background(), "k", 9, cache.NoExpiration)
+		_, err := s.SetContext(context.Background(), "k", 9, cache.Never)
 		require.NoError(t, err)
 		v, ok, err := s.GetContext(context.Background(), "k")
 		require.NoError(t, err)
@@ -190,7 +190,7 @@ func TestSharded_SetContext(t *testing.T) {
 	t.Run("delegates to the routed backend", func(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[string, int](4, cache.HashShard[string](), memoryShards[string, int]())
-		exp, err := s.SetContext(context.Background(), "k", 1, time.Hour)
+		exp, err := s.SetContext(context.Background(), "k", 1, cache.After(time.Hour))
 		require.NoError(t, err)
 		assert.WithinDuration(t, time.Now().Add(time.Hour), exp, time.Second)
 	})
@@ -202,7 +202,7 @@ func TestSharded_DeleteContext(t *testing.T) {
 	t.Run("delegates to the routed backend", func(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[string, int](4, cache.HashShard[string](), memoryShards[string, int]())
-		s.Set("k", 1, cache.NoExpiration)
+		s.Set("k", 1, cache.Never)
 		require.NoError(t, s.DeleteContext(context.Background(), "k"))
 		_, ok := s.Get("k")
 		assert.False(t, ok)

@@ -83,8 +83,8 @@ func (s *Sharded[K, V]) Get(key K) (V, bool) {
 }
 
 // Set implements [Cache.Set].
-func (s *Sharded[K, V]) Set(key K, val V, ttl time.Duration) time.Time {
-	return s.shard(key).Set(key, val, ttl)
+func (s *Sharded[K, V]) Set(key K, val V, exp Expiry) time.Time {
+	return s.shard(key).Set(key, val, exp)
 }
 
 // Delete implements [Cache.Delete].
@@ -98,8 +98,8 @@ func (s *Sharded[K, V]) GetContext(ctx context.Context, key K) (V, bool, error) 
 }
 
 // SetContext implements [Cache.SetContext].
-func (s *Sharded[K, V]) SetContext(ctx context.Context, key K, val V, ttl time.Duration) (time.Time, error) {
-	return s.shard(key).SetContext(ctx, key, val, ttl)
+func (s *Sharded[K, V]) SetContext(ctx context.Context, key K, val V, exp Expiry) (time.Time, error) {
+	return s.shard(key).SetContext(ctx, key, val, exp)
 }
 
 // DeleteContext implements [Cache.DeleteContext].

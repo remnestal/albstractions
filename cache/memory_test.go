@@ -16,7 +16,7 @@ func TestNewMemory(t *testing.T) {
 	t.Run("zero value is usable", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		exp := c.Set("k", 1, cache.NoExpiration)
+		exp := c.Set("k", 1, cache.Never)
 		assert.True(t, exp.IsZero())
 		v, ok := c.Get("k")
 		assert.True(t, ok)
@@ -37,7 +37,7 @@ func TestMemory_Get(t *testing.T) {
 	t.Run("returns the stored value", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		c.Set("k", 42, cache.NoExpiration)
+		c.Set("k", 42, cache.Never)
 		v, ok := c.Get("k")
 		require.True(t, ok)
 		assert.Equal(t, 42, v)
@@ -54,7 +54,7 @@ func TestMemory_Get(t *testing.T) {
 	t.Run("reports an expired entry as missing", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		c.Set("k", 1, time.Nanosecond)
+		c.Set("k", 1, cache.After(time.Nanosecond))
 		time.Sleep(time.Millisecond)
 		_, ok := c.Get("k")
 		assert.False(t, ok)
@@ -67,57 +67,57 @@ func TestMemory_Set(t *testing.T) {
 	t.Run("returns the absolute expiry for a positive ttl", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		exp := c.Set("k", 1, time.Hour)
+		exp := c.Set("k", 1, cache.After(time.Hour))
 		assert.WithinDuration(t, time.Now().Add(time.Hour), exp, time.Second)
 	})
 
-	t.Run("NoExpiration yields the zero time", func(t *testing.T) {
+	t.Run("Never yields the zero time", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		exp := c.Set("k", 1, cache.NoExpiration)
+		exp := c.Set("k", 1, cache.Never)
 		assert.True(t, exp.IsZero())
 	})
 
-	t.Run("DefaultTTL uses the configured default", func(t *testing.T) {
+	t.Run("Default uses the configured default", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int](cache.WithDefaultTTL(30 * time.Minute))
-		exp := c.Set("k", 1, cache.DefaultTTL)
+		exp := c.Set("k", 1, cache.Default)
 		assert.WithinDuration(t, time.Now().Add(30*time.Minute), exp, time.Second)
 	})
 
 	t.Run("overwrites the existing value", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		c.Set("k", 1, cache.NoExpiration)
-		c.Set("k", 2, cache.NoExpiration)
+		c.Set("k", 1, cache.Never)
+		c.Set("k", 2, cache.Never)
 		v, _ := c.Get("k")
 		assert.Equal(t, 2, v)
 	})
 
-	t.Run("KeepTTL preserves the existing expiry", func(t *testing.T) {
+	t.Run("Keep preserves the existing expiry", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		first := c.Set("k", 1, time.Hour)
+		first := c.Set("k", 1, cache.After(time.Hour))
 		time.Sleep(5 * time.Millisecond)
-		kept := c.Set("k", 2, cache.KeepTTL)
+		kept := c.Set("k", 2, cache.Keep)
 		assert.Equal(t, first, kept)
 		v, _ := c.Get("k")
 		assert.Equal(t, 2, v)
 	})
 
-	t.Run("KeepTTL on an absent key never expires", func(t *testing.T) {
+	t.Run("Keep on an absent key falls back to Default", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		exp := c.Set("k", 1, cache.KeepTTL)
+		exp := c.Set("k", 1, cache.Keep)
 		assert.True(t, exp.IsZero())
 	})
 
-	t.Run("KeepTTL on an expired entry does not resurrect a stale expiry", func(t *testing.T) {
+	t.Run("Keep on an expired entry does not resurrect a stale expiry", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		c.Set("k", 1, time.Nanosecond)
+		c.Set("k", 1, cache.After(time.Nanosecond))
 		time.Sleep(time.Millisecond)
-		exp := c.Set("k", 2, cache.KeepTTL)
+		exp := c.Set("k", 2, cache.Keep)
 		assert.True(t, exp.IsZero())
 		v, ok := c.Get("k")
 		require.True(t, ok)
@@ -131,7 +131,7 @@ func TestMemory_Delete(t *testing.T) {
 	t.Run("removes the entry", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		c.Set("k", 1, cache.NoExpiration)
+		c.Set("k", 1, cache.Never)
 		c.Delete("k")
 		_, ok := c.Get("k")
 		assert.False(t, ok)
@@ -150,8 +150,8 @@ func TestMemory_Items(t *testing.T) {
 	t.Run("yields all live entries", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		c.Set("a", 1, cache.NoExpiration)
-		c.Set("b", 2, cache.NoExpiration)
+		c.Set("a", 1, cache.Never)
+		c.Set("b", 2, cache.Never)
 		got := map[string]int{}
 		for k, v := range c.Items() {
 			got[k] = v
@@ -162,8 +162,8 @@ func TestMemory_Items(t *testing.T) {
 	t.Run("excludes expired entries", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		c.Set("live", 1, time.Hour)
-		c.Set("dead", 2, time.Nanosecond)
+		c.Set("live", 1, cache.After(time.Hour))
+		c.Set("dead", 2, cache.After(time.Nanosecond))
 		time.Sleep(time.Millisecond)
 		got := map[string]int{}
 		for k, v := range c.Items() {
@@ -176,11 +176,11 @@ func TestMemory_Items(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[int, int]()
 		for i := range 5 {
-			c.Set(i, i, cache.NoExpiration)
+			c.Set(i, i, cache.Never)
 		}
 		count := 0
 		for k := range c.Items() {
-			c.Set(k+100, k, cache.NoExpiration)
+			c.Set(k+100, k, cache.Never)
 			c.Delete(k)
 			count++
 		}
@@ -191,7 +191,7 @@ func TestMemory_Items(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[int, int]()
 		for i := range 10 {
-			c.Set(i, i, cache.NoExpiration)
+			c.Set(i, i, cache.Never)
 		}
 		seen := 0
 		for range c.Items() {
@@ -208,7 +208,7 @@ func TestMemory_GetContext(t *testing.T) {
 	t.Run("matches Get and returns no error", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		c.Set("k", 7, cache.NoExpiration)
+		c.Set("k", 7, cache.Never)
 		v, ok, err := c.GetContext(context.Background(), "k")
 		require.NoError(t, err)
 		assert.True(t, ok)
@@ -222,7 +222,7 @@ func TestMemory_SetContext(t *testing.T) {
 	t.Run("stores and returns the expiry with no error", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		exp, err := c.SetContext(context.Background(), "k", 1, time.Hour)
+		exp, err := c.SetContext(context.Background(), "k", 1, cache.After(time.Hour))
 		require.NoError(t, err)
 		assert.WithinDuration(t, time.Now().Add(time.Hour), exp, time.Second)
 		v, _ := c.Get("k")
@@ -236,7 +236,7 @@ func TestMemory_DeleteContext(t *testing.T) {
 	t.Run("removes and returns no error", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
-		c.Set("k", 1, cache.NoExpiration)
+		c.Set("k", 1, cache.Never)
 		require.NoError(t, c.DeleteContext(context.Background(), "k"))
 		_, ok := c.Get("k")
 		assert.False(t, ok)
@@ -257,7 +257,7 @@ func TestMemory_Close(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int](cache.WithCleanupInterval(time.Hour))
 		require.NoError(t, c.Close())
-		c.Set("k", 1, cache.NoExpiration)
+		c.Set("k", 1, cache.Never)
 		v, ok := c.Get("k")
 		assert.True(t, ok)
 		assert.Equal(t, 1, v)

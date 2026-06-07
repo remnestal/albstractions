@@ -40,7 +40,7 @@ func TestWriteThrough_SetContext(t *testing.T) {
 		front := cache.NewMemory[string, int]()
 		wt := cache.NewWriteThrough[string, int](front, writer)
 
-		_, err := wt.SetContext(context.Background(), "k", 5, cache.NoExpiration)
+		_, err := wt.SetContext(context.Background(), "k", 5, cache.Never)
 		require.NoError(t, err)
 		assert.Equal(t, 5, backing["k"])
 		v, ok := front.Get("k")
@@ -55,7 +55,7 @@ func TestWriteThrough_SetContext(t *testing.T) {
 		front := cache.NewMemory[string, int]()
 		wt := cache.NewWriteThrough[string, int](front, writer)
 
-		_, err := wt.SetContext(context.Background(), "k", 5, cache.NoExpiration)
+		_, err := wt.SetContext(context.Background(), "k", 5, cache.Never)
 		assert.ErrorIs(t, err, boom)
 		_, ok := front.Get("k")
 		assert.False(t, ok)
@@ -72,7 +72,7 @@ func TestWriteThrough_Set(t *testing.T) {
 		front := cache.NewMemory[string, int]()
 		wt := cache.NewWriteThrough[string, int](front, writer)
 
-		exp := wt.Set("k", 1, time.Hour)
+		exp := wt.Set("k", 1, cache.After(time.Hour))
 		assert.WithinDuration(t, time.Now().Add(time.Hour), exp, time.Second)
 		assert.Equal(t, 1, backing["k"])
 	})
@@ -84,7 +84,7 @@ func TestWriteThrough_Get(t *testing.T) {
 	t.Run("reads from the front", func(t *testing.T) {
 		t.Parallel()
 		front := cache.NewMemory[string, int]()
-		front.Set("k", 9, cache.NoExpiration)
+		front.Set("k", 9, cache.Never)
 		wt := cache.NewWriteThrough[string, int](front, okWriter)
 		v, ok := wt.Get("k")
 		assert.True(t, ok)
@@ -98,7 +98,7 @@ func TestWriteThrough_GetContext(t *testing.T) {
 	t.Run("reads from the front", func(t *testing.T) {
 		t.Parallel()
 		front := cache.NewMemory[string, int]()
-		front.Set("k", 9, cache.NoExpiration)
+		front.Set("k", 9, cache.Never)
 		wt := cache.NewWriteThrough[string, int](front, okWriter)
 		v, ok, err := wt.GetContext(context.Background(), "k")
 		require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestWriteThrough_DeleteContext(t *testing.T) {
 		t.Parallel()
 		backing := map[string]int{"k": 1}
 		front := cache.NewMemory[string, int]()
-		front.Set("k", 1, cache.NoExpiration)
+		front.Set("k", 1, cache.Never)
 		deleter := func(_ context.Context, k string) error { delete(backing, k); return nil }
 		wt := cache.NewWriteThrough[string, int](front, okWriter, cache.WithDeleter[string, int](deleter))
 
@@ -129,7 +129,7 @@ func TestWriteThrough_DeleteContext(t *testing.T) {
 		t.Parallel()
 		boom := errors.New("boom")
 		front := cache.NewMemory[string, int]()
-		front.Set("k", 1, cache.NoExpiration)
+		front.Set("k", 1, cache.Never)
 		deleter := func(context.Context, string) error { return boom }
 		wt := cache.NewWriteThrough[string, int](front, okWriter, cache.WithDeleter[string, int](deleter))
 
@@ -141,7 +141,7 @@ func TestWriteThrough_DeleteContext(t *testing.T) {
 	t.Run("without a deleter only the front is affected", func(t *testing.T) {
 		t.Parallel()
 		front := cache.NewMemory[string, int]()
-		front.Set("k", 1, cache.NoExpiration)
+		front.Set("k", 1, cache.Never)
 		wt := cache.NewWriteThrough[string, int](front, okWriter)
 
 		require.NoError(t, wt.DeleteContext(context.Background(), "k"))
@@ -156,7 +156,7 @@ func TestWriteThrough_Items(t *testing.T) {
 	t.Run("iterates the front only", func(t *testing.T) {
 		t.Parallel()
 		front := cache.NewMemory[string, int]()
-		front.Set("a", 1, cache.NoExpiration)
+		front.Set("a", 1, cache.Never)
 		wt := cache.NewWriteThrough[string, int](front, okWriter)
 		got := map[string]int{}
 		for k, v := range wt.Items() {
@@ -173,7 +173,7 @@ func TestWriteThrough_Delete(t *testing.T) {
 		t.Parallel()
 		backing := map[string]int{"k": 1}
 		front := cache.NewMemory[string, int]()
-		front.Set("k", 1, cache.NoExpiration)
+		front.Set("k", 1, cache.Never)
 		deleter := func(_ context.Context, k string) error { delete(backing, k); return nil }
 		wt := cache.NewWriteThrough[string, int](front, okWriter, cache.WithDeleter[string, int](deleter))
 

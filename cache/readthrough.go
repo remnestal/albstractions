@@ -116,8 +116,8 @@ func (r *ReadThrough[K, V]) Get(key K) (V, bool) {
 }
 
 // Set implements [Cache.Set]. It passes through to the front cache.
-func (r *ReadThrough[K, V]) Set(key K, val V, ttl time.Duration) time.Time {
-	return r.front.Set(key, val, ttl)
+func (r *ReadThrough[K, V]) Set(key K, val V, exp Expiry) time.Time {
+	return r.front.Set(key, val, exp)
 }
 
 // Delete implements [Cache.Delete]. It passes through to the front cache.
@@ -142,8 +142,8 @@ func (r *ReadThrough[K, V]) GetContext(ctx context.Context, key K) (V, bool, err
 }
 
 // SetContext implements [Cache.SetContext]. It passes through to the front.
-func (r *ReadThrough[K, V]) SetContext(ctx context.Context, key K, val V, ttl time.Duration) (time.Time, error) {
-	return r.front.SetContext(ctx, key, val, ttl)
+func (r *ReadThrough[K, V]) SetContext(ctx context.Context, key K, val V, exp Expiry) (time.Time, error) {
+	return r.front.SetContext(ctx, key, val, exp)
 }
 
 // DeleteContext implements [Cache.DeleteContext]. It passes through to the front.
@@ -175,7 +175,7 @@ func (r *ReadThrough[K, V]) loadAndStore(ctx context.Context, key K) (V, error) 
 		if err != nil {
 			return v, err
 		}
-		_, _ = r.front.SetContext(ctx, key, v, DefaultTTL)
+		_, _ = r.front.SetContext(ctx, key, v, Default)
 		return v, nil
 	}
 	if r.flight != nil {

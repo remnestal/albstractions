@@ -13,12 +13,12 @@ import (
 
 // Call records a single invocation of a [Backend] method.
 //
-// Val and TTL are set only for Set calls; they are zero for other operations.
+// Val and Exp are set only for Set calls; they are zero for other operations.
 type Call[K comparable, V any] struct {
 	Op  string
 	Key K
 	Val V
-	TTL time.Duration
+	Exp cache.Expiry
 }
 
 // Backend is a configurable [cache.Cache] test double.
@@ -32,7 +32,7 @@ type Call[K comparable, V any] struct {
 // functions.
 type Backend[K comparable, V any] struct {
 	GetFunc    func(ctx context.Context, key K) (V, bool, error)
-	SetFunc    func(ctx context.Context, key K, val V, ttl time.Duration) (time.Time, error)
+	SetFunc    func(ctx context.Context, key K, val V, exp cache.Expiry) (time.Time, error)
 	DeleteFunc func(ctx context.Context, key K) error
 	ItemsFunc  func() iter.Seq2[K, V]
 
@@ -53,8 +53,8 @@ func (b *Backend[K, V]) Get(key K) (V, bool) {
 }
 
 // Set implements [cache.Cache.Set].
-func (b *Backend[K, V]) Set(key K, val V, ttl time.Duration) time.Time {
-	t, _ := b.SetContext(context.Background(), key, val, ttl)
+func (b *Backend[K, V]) Set(key K, val V, exp cache.Expiry) time.Time {
+	t, _ := b.SetContext(context.Background(), key, val, exp)
 	return t
 }
 
@@ -74,10 +74,10 @@ func (b *Backend[K, V]) GetContext(ctx context.Context, key K) (V, bool, error) 
 }
 
 // SetContext implements [cache.Cache.SetContext], delegating to SetFunc.
-func (b *Backend[K, V]) SetContext(ctx context.Context, key K, val V, ttl time.Duration) (time.Time, error) {
-	b.record(Call[K, V]{Op: "Set", Key: key, Val: val, TTL: ttl})
+func (b *Backend[K, V]) SetContext(ctx context.Context, key K, val V, exp cache.Expiry) (time.Time, error) {
+	b.record(Call[K, V]{Op: "Set", Key: key, Val: val, Exp: exp})
 	if b.SetFunc != nil {
-		return b.SetFunc(ctx, key, val, ttl)
+		return b.SetFunc(ctx, key, val, exp)
 	}
 	return time.Time{}, nil
 }
