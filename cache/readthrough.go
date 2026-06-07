@@ -46,11 +46,15 @@ func WithMissError(errs ...error) ReadThroughOption {
 // populates a front cache.
 //
 // On a miss in the front cache it calls the [Loader]; a loaded value is stored
-// in the front under [DefaultTTL] and returned. A loader error recognised as a
+// in the front under [Default] and returned. A loader error recognised as a
 // miss surfaces as an ordinary miss (false, nil) so the caller can create the
 // value while keeping the cache layer; any other error propagates. Writes and
 // deletes pass straight through to the front, and [ReadThrough.Items] iterates
 // the front only.
+//
+// A value written with [ReadThrough.Set] while a load for the same key is in
+// flight may be overwritten by the load's now-stale result: read-through
+// populates the front without coordinating with concurrent writers.
 //
 // ReadThrough is safe for concurrent use when its front and loader are.
 type ReadThrough[K comparable, V any] struct {

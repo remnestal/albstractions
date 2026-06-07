@@ -77,8 +77,12 @@ func (w *WriteThrough[K, V]) Get(key K) (V, bool) {
 	return w.front.Get(key)
 }
 
-// Set implements [Cache.Set]. It writes through, returning the front's expiry
-// (or the zero time if the backing write fails).
+// Set implements [Cache.Set]. It writes through, returning the front's expiry.
+//
+// The infallible form cannot report a backing-store failure: on a failed write
+// it returns the zero time, which is indistinguishable from a successful write of
+// a never-expiring entry. Use [WriteThrough.SetContext] when the caller must
+// observe write errors.
 func (w *WriteThrough[K, V]) Set(key K, val V, exp Expiry) time.Time {
 	t, _ := w.SetContext(context.Background(), key, val, exp)
 	return t
