@@ -121,6 +121,11 @@ func (w *WriteThrough[K, V]) Items() iter.Seq2[K, V] {
 	return w.front.Items()
 }
 
+// ItemsContext implements [Cache.ItemsContext], iterating the front cache only.
+func (w *WriteThrough[K, V]) ItemsContext(ctx context.Context) (iter.Seq2[K, V], func() error) {
+	return w.front.ItemsContext(ctx)
+}
+
 // Close closes the front cache if it implements io.Closer.
 //
 // Closing a wrapper closes the layer beneath it, so closing the outermost cache

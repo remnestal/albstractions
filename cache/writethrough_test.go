@@ -166,6 +166,24 @@ func TestWriteThrough_Items(t *testing.T) {
 	})
 }
 
+func TestWriteThrough_ItemsContext(t *testing.T) {
+	t.Parallel()
+
+	t.Run("iterates the front only", func(t *testing.T) {
+		t.Parallel()
+		front := cache.NewMemory[string, int]()
+		front.Set("a", 1, cache.Never)
+		wt := cache.NewWriteThrough[string, int](front, okWriter)
+		seq, errf := wt.ItemsContext(context.Background())
+		got := map[string]int{}
+		for k, v := range seq {
+			got[k] = v
+		}
+		require.NoError(t, errf())
+		assert.Equal(t, map[string]int{"a": 1}, got)
+	})
+}
+
 func TestWriteThrough_Delete(t *testing.T) {
 	t.Parallel()
 

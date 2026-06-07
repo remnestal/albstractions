@@ -108,19 +108,36 @@ func (s *Sharded[K, V]) DeleteContext(ctx context.Context, key K) error {
 }
 
 // Items implements [Cache.Items].
-//
-// It visits the backends in order, locking only one at a time, so a large
-// cache stays available to writers throughout the scan.
 func (s *Sharded[K, V]) Items() iter.Seq2[K, V] {
-	return func(yield func(K, V) bool) {
+	seq, _ := s.ItemsContext(context.Background())
+	return seq
+}
+
+// ItemsContext implements [Cache.ItemsContext].
+//
+// It visits the backends in order, locking only one at a time, so a large cache
+// stays available to writers throughout the scan. It stops at the first backend
+// that reports an error or when ctx is cancelled, and the terminal accessor
+// returns that error.
+func (s *Sharded[K, V]) ItemsContext(ctx context.Context) (iter.Seq2[K, V], func() error) {
+	var err error
+	seq := func(yield func(K, V) bool) {
 		for _, shard := range s.shards {
-			for k, v := range shard.Items() {
+			if err = ctx.Err(); err != nil {
+				return
+			}
+			sub, errf := shard.ItemsContext(ctx)
+			for k, v := range sub {
 				if !yield(k, v) {
 					return
 				}
 			}
+			if err = errf(); err != nil {
+				return
+			}
 		}
 	}
+	return seq, func() error { return err }
 }
 
 // Close closes every backend that implements io.Closer and joins their errors.

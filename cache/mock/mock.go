@@ -31,10 +31,10 @@ type Call[K comparable, V any] struct {
 // Backend is safe for concurrent use up to the behaviour of the configured
 // functions.
 type Backend[K comparable, V any] struct {
-	GetFunc    func(ctx context.Context, key K) (V, bool, error)
-	SetFunc    func(ctx context.Context, key K, val V, exp cache.Expiry) (time.Time, error)
-	DeleteFunc func(ctx context.Context, key K) error
-	ItemsFunc  func() iter.Seq2[K, V]
+	GetFunc          func(ctx context.Context, key K) (V, bool, error)
+	SetFunc          func(ctx context.Context, key K, val V, exp cache.Expiry) (time.Time, error)
+	DeleteFunc       func(ctx context.Context, key K) error
+	ItemsContextFunc func(ctx context.Context) (iter.Seq2[K, V], func() error)
 
 	mu    sync.Mutex
 	calls []Call[K, V]
@@ -91,13 +91,20 @@ func (b *Backend[K, V]) DeleteContext(ctx context.Context, key K) error {
 	return nil
 }
 
-// Items implements [cache.Cache.Items], delegating to ItemsFunc.
+// Items implements [cache.Cache.Items].
 func (b *Backend[K, V]) Items() iter.Seq2[K, V] {
+	seq, _ := b.ItemsContext(context.Background())
+	return seq
+}
+
+// ItemsContext implements [cache.Cache.ItemsContext], delegating to
+// ItemsContextFunc.
+func (b *Backend[K, V]) ItemsContext(ctx context.Context) (iter.Seq2[K, V], func() error) {
 	b.record(Call[K, V]{Op: "Items"})
-	if b.ItemsFunc != nil {
-		return b.ItemsFunc()
+	if b.ItemsContextFunc != nil {
+		return b.ItemsContextFunc(ctx)
 	}
-	return func(func(K, V) bool) {}
+	return func(func(K, V) bool) {}, func() error { return nil }
 }
 
 // Calls returns a copy of the recorded calls in invocation order.

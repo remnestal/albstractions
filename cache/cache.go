@@ -41,9 +41,11 @@ type Cache[K comparable, V any] interface {
 
 	// Items returns an iterator over the cache's live entries.
 	//
-	// Iteration is a point-in-time snapshot: entries inserted or removed after
-	// the call may or may not be observed, and the loop body may call back into
-	// the cache. A backend that cannot enumerate yields nothing.
+	// It is the infallible form of [Cache.ItemsContext]: it iterates with a
+	// background context and discards the terminal error. Iteration is a
+	// point-in-time snapshot — entries inserted or removed after the call may or
+	// may not be observed, and the loop body may call back into the cache. A
+	// backend that cannot enumerate yields nothing.
 	Items() iter.Seq2[K, V]
 
 	// GetContext returns the live value for key and whether it was present. A
@@ -59,6 +61,15 @@ type Cache[K comparable, V any] interface {
 
 	// DeleteContext removes key, if present.
 	DeleteContext(ctx context.Context, key K) error
+
+	// ItemsContext returns an iterator over the cache's live entries and a
+	// function that reports the terminal error.
+	//
+	// Call the returned function after the range loop to check for an error
+	// encountered during iteration: a backend failure, or the cause if ctx is
+	// cancelled. Iteration is a point-in-time snapshot and honours ctx; a backend
+	// that cannot enumerate yields nothing and reports no error.
+	ItemsContext(ctx context.Context) (iter.Seq2[K, V], func() error)
 }
 
 // ErrCacheMiss reports that a key was absent from a backing source.

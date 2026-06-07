@@ -99,12 +99,20 @@ func (m *Memory[K, V]) DeleteContext(_ context.Context, key K) error {
 }
 
 // Items implements [Cache.Items].
+func (m *Memory[K, V]) Items() iter.Seq2[K, V] {
+	seq, _ := m.ItemsContext(context.Background())
+	return seq
+}
+
+// ItemsContext implements [Cache.ItemsContext].
 //
 // It snapshots the live entries under a read lock when iteration begins, then
 // yields from the snapshot with no lock held, so the loop body may safely call
-// back into the cache.
-func (m *Memory[K, V]) Items() iter.Seq2[K, V] {
-	return func(yield func(K, V) bool) {
+// back into the cache. The terminal error is non-nil only when ctx is cancelled
+// during iteration.
+func (m *Memory[K, V]) ItemsContext(ctx context.Context) (iter.Seq2[K, V], func() error) {
+	var err error
+	seq := func(yield func(K, V) bool) {
 		now := time.Now()
 		m.mu.RLock()
 		keys := make([]K, 0, len(m.m))
@@ -118,11 +126,15 @@ func (m *Memory[K, V]) Items() iter.Seq2[K, V] {
 		m.mu.RUnlock()
 
 		for i := range keys {
+			if err = ctx.Err(); err != nil {
+				return
+			}
 			if !yield(keys[i], vals[i]) {
 				return
 			}
 		}
 	}
+	return seq, func() error { return err }
 }
 
 // Close stops the janitor and rebuild goroutines.

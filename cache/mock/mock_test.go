@@ -108,11 +108,11 @@ func TestBackend_Items(t *testing.T) {
 		assert.Zero(t, count)
 	})
 
-	t.Run("delegates to ItemsFunc", func(t *testing.T) {
+	t.Run("delegates to ItemsContextFunc", func(t *testing.T) {
 		t.Parallel()
 		b := &mock.Backend[string, int]{
-			ItemsFunc: func() iter.Seq2[string, int] {
-				return func(yield func(string, int) bool) { yield("a", 1) }
+			ItemsContextFunc: func(context.Context) (iter.Seq2[string, int], func() error) {
+				return func(yield func(string, int) bool) { yield("a", 1) }, func() error { return nil }
 			},
 		}
 		got := map[string]int{}
@@ -120,6 +120,31 @@ func TestBackend_Items(t *testing.T) {
 			got[k] = v
 		}
 		assert.Equal(t, map[string]int{"a": 1}, got)
+	})
+}
+
+func TestBackend_ItemsContext(t *testing.T) {
+	t.Parallel()
+
+	t.Run("reports the terminal error", func(t *testing.T) {
+		t.Parallel()
+		boom := errors.New("boom")
+		b := &mock.Backend[string, int]{
+			ItemsContextFunc: func(context.Context) (iter.Seq2[string, int], func() error) {
+				return func(func(string, int) bool) {}, func() error { return boom }
+			},
+		}
+		seq, errf := b.ItemsContext(context.Background())
+		for range seq {
+		}
+		assert.ErrorIs(t, errf(), boom)
+	})
+
+	t.Run("defaults to no error", func(t *testing.T) {
+		t.Parallel()
+		b := &mock.Backend[string, int]{}
+		_, errf := b.ItemsContext(context.Background())
+		assert.NoError(t, errf())
 	})
 }
 

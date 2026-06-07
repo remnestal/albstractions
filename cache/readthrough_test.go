@@ -139,6 +139,24 @@ func TestReadThrough_Items(t *testing.T) {
 	})
 }
 
+func TestReadThrough_ItemsContext(t *testing.T) {
+	t.Parallel()
+
+	t.Run("iterates the front only", func(t *testing.T) {
+		t.Parallel()
+		front := cache.NewMemory[string, int]()
+		front.Set("a", 1, cache.Never)
+		rt := cache.NewReadThrough[string, int](front, constLoader[string](0, nil))
+		seq, errf := rt.ItemsContext(context.Background())
+		got := map[string]int{}
+		for k, v := range seq {
+			got[k] = v
+		}
+		require.NoError(t, errf())
+		assert.Equal(t, map[string]int{"a": 1}, got)
+	})
+}
+
 func TestReadThrough_SetContext(t *testing.T) {
 	t.Parallel()
 

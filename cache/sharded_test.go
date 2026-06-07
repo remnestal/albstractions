@@ -2,11 +2,14 @@ package cache_test
 
 import (
 	"context"
+	"errors"
+	"iter"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/remnestal/albstractions/cache"
+	"github.com/remnestal/albstractions/cache/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -152,6 +155,41 @@ func TestSharded_Items(t *testing.T) {
 			got[k] = v
 		}
 		assert.Len(t, got, 100)
+	})
+}
+
+func TestSharded_ItemsContext(t *testing.T) {
+	t.Parallel()
+
+	t.Run("unions live entries with no error", func(t *testing.T) {
+		t.Parallel()
+		s := cache.NewSharded[int, int](4, cache.HashShard[int](), memoryShards[int, int]())
+		for i := range 50 {
+			s.Set(i, i, cache.Never)
+		}
+		seq, errf := s.ItemsContext(context.Background())
+		got := map[int]int{}
+		for k, v := range seq {
+			got[k] = v
+		}
+		require.NoError(t, errf())
+		assert.Len(t, got, 50)
+	})
+
+	t.Run("reports a backend error", func(t *testing.T) {
+		t.Parallel()
+		boom := errors.New("scan failed")
+		s := cache.NewSharded[string, int](2, cache.HashShard[string](), func() cache.Cache[string, int] {
+			return &mock.Backend[string, int]{
+				ItemsContextFunc: func(context.Context) (iter.Seq2[string, int], func() error) {
+					return func(func(string, int) bool) {}, func() error { return boom }
+				},
+			}
+		})
+		seq, errf := s.ItemsContext(context.Background())
+		for range seq {
+		}
+		assert.ErrorIs(t, errf(), boom)
 	})
 }
 

@@ -202,6 +202,41 @@ func TestMemory_Items(t *testing.T) {
 	})
 }
 
+func TestMemory_ItemsContext(t *testing.T) {
+	t.Parallel()
+
+	t.Run("yields live entries with no error", func(t *testing.T) {
+		t.Parallel()
+		c := cache.NewMemory[string, int]()
+		c.Set("a", 1, cache.Never)
+		c.Set("b", 2, cache.Never)
+		seq, errf := c.ItemsContext(context.Background())
+		got := map[string]int{}
+		for k, v := range seq {
+			got[k] = v
+		}
+		require.NoError(t, errf())
+		assert.Equal(t, map[string]int{"a": 1, "b": 2}, got)
+	})
+
+	t.Run("a cancelled context stops iteration and reports the error", func(t *testing.T) {
+		t.Parallel()
+		c := cache.NewMemory[int, int]()
+		for i := range 10 {
+			c.Set(i, i, cache.Never)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		seq, errf := c.ItemsContext(ctx)
+		n := 0
+		for range seq {
+			n++
+		}
+		assert.Zero(t, n)
+		assert.ErrorIs(t, errf(), context.Canceled)
+	})
+}
+
 func TestMemory_GetContext(t *testing.T) {
 	t.Parallel()
 

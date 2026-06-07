@@ -20,6 +20,7 @@ type Cache[K comparable, V any] interface {
     GetContext(ctx context.Context, key K) (V, bool, error)
     SetContext(ctx context.Context, key K, val V, exp Expiry) (time.Time, error)
     DeleteContext(ctx context.Context, key K) error
+    ItemsContext(ctx context.Context) (iter.Seq2[K, V], func() error)
 }
 ```
 
@@ -123,7 +124,19 @@ for k, v := range c.Items() {
 }
 ```
 
-Iteration is a point-in-time snapshot taken under a read lock, then yielded with no lock held, so the loop body may safely read or write the cache. `Sharded` visits one backend at a time, and the wrappers iterate their front only — you cannot enumerate an origin store through the cache.
+For an I/O backend that can fail or be cancelled mid-scan, `ItemsContext` returns the iterator plus a terminal-error accessor — check it after the loop, like `bufio.Scanner.Err`:
+
+```go
+seq, errf := c.ItemsContext(ctx)
+for k, v := range seq {
+    // ...
+}
+if err := errf(); err != nil {
+    // the scan failed or ctx was cancelled
+}
+```
+
+`Items` is the infallible form of `ItemsContext` (background context, error discarded). Iteration is a point-in-time snapshot taken under a read lock, then yielded with no lock held, so the loop body may safely read or write the cache. `Sharded` visits one backend at a time, and the wrappers iterate their front only — you cannot enumerate an origin store through the cache.
 
 ## Lifecycle and concurrency
 
