@@ -18,7 +18,9 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/url"
 	"time"
+	"unicode"
 )
 
 // Bundle holds a PEM-encoded certificate and its matching private key.
@@ -76,6 +78,7 @@ type certConfig struct {
 	maxPathLen     int
 	maxPathLenZero bool
 	serial         *big.Int
+	uris           []string
 }
 
 // WithMaxPathLen sets the maximum CA chain depth.
@@ -99,6 +102,27 @@ func WithMaxPathLen(n int) Option {
 func WithSerial(serial *big.Int) Option {
 	return func(c *certConfig) {
 		c.serial = serial
+	}
+}
+
+// WithURIs sets the URI SANs of the generated certificate, preserving the
+// given order.
+//
+// Typical use is a SPIFFE ID such as "spiffe://example.org/service/name",
+// which peers can read back from [crypto/x509.Certificate.URIs] as the
+// certificate's identity.
+//
+// Each uri must be an absolute, ASCII-only URI that is already in normalised
+// form; anything the issued certificate would not reproduce verbatim is
+// rejected, so an identity is never silently rewritten.
+//
+// A URI SAN satisfies the requirement that a server or peer certificate carry
+// at least one SAN, so a leaf may be issued with no DNS name or IP address.
+//
+// WithURIs is ignored when passed to [GenerateCA].
+func WithURIs(uris ...string) Option {
+	return func(c *certConfig) {
+		c.uris = uris
 	}
 }
 
@@ -160,7 +184,8 @@ func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Du
 // GenerateServerCert creates a leaf certificate for server authentication,
 // signed by the given CA.
 //
-// At least one DNS name or IP address must be provided.
+// At least one SAN must be provided, either as a DNS name, an IP address, or a
+// URI via [WithURIs].
 func GenerateServerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
 	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, opts...)
 }
@@ -174,7 +199,8 @@ func GenerateClientCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dn
 // GeneratePeerCert creates a leaf certificate for mutual TLS, valid for both
 // server and client authentication, signed by the given CA.
 //
-// At least one DNS name or IP address must be provided.
+// At least one SAN must be provided, either as a DNS name, an IP address, or a
+// URI via [WithURIs].
 func GeneratePeerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
 	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, opts...)
 }
@@ -185,10 +211,15 @@ func generateCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames
 		opt(cfg)
 	}
 
+	uris, err := resolveURIs(cfg)
+	if err != nil {
+		return Bundle{}, fmt.Errorf("resolve leaf URI SANs: %w", err)
+	}
+
 	for _, u := range extKeyUsage {
 		if u == x509.ExtKeyUsageServerAuth {
-			if len(dnsNames) == 0 && len(ips) == 0 {
-				return Bundle{}, fmt.Errorf("server certificate requires at least one SAN (DNS name or IP address)")
+			if len(dnsNames) == 0 && len(ips) == 0 && len(uris) == 0 {
+				return Bundle{}, fmt.Errorf("server certificate requires at least one SAN (DNS name, IP address, or URI)")
 			}
 			break
 		}
@@ -228,6 +259,7 @@ func generateCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames
 		},
 		DNSNames:    dnsNames,
 		IPAddresses: ips,
+		URIs:        uris,
 		NotBefore:   notBefore,
 		NotAfter:    leafNotAfter,
 		KeyUsage:    x509.KeyUsageDigitalSignature,
@@ -288,6 +320,44 @@ func resolveSerial(cfg *certConfig) (*big.Int, error) {
 		return nil, fmt.Errorf("serial exceeds maximum length of 20 octets (RFC 5280)")
 	}
 	return cfg.serial, nil
+}
+
+func resolveURIs(cfg *certConfig) ([]*url.URL, error) {
+	if len(cfg.uris) == 0 {
+		return nil, nil
+	}
+	uris := make([]*url.URL, 0, len(cfg.uris))
+	for _, raw := range cfg.uris {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse URI SAN %q: %w", raw, err)
+		}
+		if !u.IsAbs() {
+			return nil, fmt.Errorf("URI SAN %q is not absolute (no scheme)", raw)
+		}
+		// URI SANs are encoded as IA5String; a non-ASCII byte would produce a
+		// certificate that other implementations reject or read back differently.
+		if !isASCII(raw) {
+			return nil, fmt.Errorf("URI SAN %q contains non-ASCII characters", raw)
+		}
+		// x509 serialises u.String(), which url.Parse is free to normalise away
+		// from the input. Reject anything that does not survive the round trip
+		// so the issued identity is exactly the one the caller asked for.
+		if u.String() != raw {
+			return nil, fmt.Errorf("URI SAN %q is not in normalised form (would be issued as %q)", raw, u.String())
+		}
+		uris = append(uris, u)
+	}
+	return uris, nil
+}
+
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] > unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
 }
 
 func randomSerial() (*big.Int, error) {

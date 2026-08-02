@@ -303,6 +303,84 @@ func TestGeneratePeerCert(t *testing.T) {
 		cert := parseCert(t, leaf.CertPEM)
 		assert.Equal(t, 0, want.Cmp(cert.SerialNumber))
 	})
+
+	t.Run("leaf cert has no URI SANs by default", func(t *testing.T) {
+		t.Parallel()
+
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour)
+		require.NoError(t, err)
+
+		cert := parseCert(t, leaf.CertPEM)
+		assert.Empty(t, cert.URIs)
+	})
+
+	t.Run("WithURIs sets a SPIFFE ID that survives the DER round trip", func(t *testing.T) {
+		t.Parallel()
+
+		const spiffeID = "spiffe://example.org/service/api"
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour, pki.WithURIs(spiffeID))
+		require.NoError(t, err)
+
+		// Consumers such as mesh read the identity from URIs[0], preferring it
+		// over any DNS name or the CommonName.
+		cert := parseCert(t, leaf.CertPEM)
+		require.Len(t, cert.URIs, 1)
+		assert.Equal(t, spiffeID, cert.URIs[0].String())
+	})
+
+	t.Run("WithURIs preserves the order of multiple URIs", func(t *testing.T) {
+		t.Parallel()
+
+		want := []string{"spiffe://example.org/service/api", "spiffe://example.org/service/backup", "https://example.org/service"}
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour, pki.WithURIs(want...))
+		require.NoError(t, err)
+
+		cert := parseCert(t, leaf.CertPEM)
+		got := make([]string, 0, len(cert.URIs))
+		for _, u := range cert.URIs {
+			got = append(got, u.String())
+		}
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("WithURIs alone satisfies the SAN requirement", func(t *testing.T) {
+		t.Parallel()
+
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", nil, nil, time.Hour, pki.WithURIs("spiffe://example.org/service/api"))
+		require.NoError(t, err)
+
+		cert := parseCert(t, leaf.CertPEM)
+		assert.Empty(t, cert.DNSNames)
+		assert.Empty(t, cert.IPAddresses)
+		require.Len(t, cert.URIs, 1)
+	})
+
+	t.Run("WithURIs rejects URIs that would not be issued verbatim", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			uri  string
+			want string
+		}{
+			{name: "empty", uri: "", want: "not absolute"},
+			{name: "relative path", uri: "/service/api", want: "not absolute"},
+			{name: "scheme-less authority", uri: "example.org/service/api", want: "not absolute"},
+			{name: "non-ASCII", uri: "spiffe://example.org/service/äpi", want: "non-ASCII"},
+			{name: "unescaped space", uri: "spiffe://example.org/service/a pi", want: "normalised form"},
+			{name: "control character", uri: "spiffe://example.org/service/\x7f", want: "URI SAN"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour, pki.WithURIs(tt.uri))
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.want)
+			})
+		}
+	})
 }
 
 func TestGenerateServerCert(t *testing.T) {
@@ -340,6 +418,18 @@ func TestGenerateServerCert(t *testing.T) {
 		assert.Contains(t, err.Error(), "SAN")
 	})
 
+	t.Run("WithURIs alone satisfies the SAN requirement", func(t *testing.T) {
+		t.Parallel()
+
+		const spiffeID = "spiffe://example.org/service/api"
+		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", nil, nil, time.Hour, pki.WithURIs(spiffeID))
+		require.NoError(t, err)
+
+		cert := parseCert(t, leaf.CertPEM)
+		require.Len(t, cert.URIs, 1)
+		assert.Equal(t, spiffeID, cert.URIs[0].String())
+	})
+
 	t.Run("WithSerial sets serial on server certificate", func(t *testing.T) {
 		t.Parallel()
 
@@ -367,6 +457,18 @@ func TestGenerateClientCert(t *testing.T) {
 		cert := parseCert(t, leaf.CertPEM)
 		assert.Contains(t, cert.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
 		assert.NotContains(t, cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
+	})
+
+	t.Run("WithURIs sets URI SAN on client certificate", func(t *testing.T) {
+		t.Parallel()
+
+		const spiffeID = "spiffe://example.org/service/cli"
+		leaf, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", nil, nil, time.Hour, pki.WithURIs(spiffeID))
+		require.NoError(t, err)
+
+		cert := parseCert(t, leaf.CertPEM)
+		require.Len(t, cert.URIs, 1)
+		assert.Equal(t, spiffeID, cert.URIs[0].String())
 	})
 
 	t.Run("WithSerial sets serial on client certificate", func(t *testing.T) {
