@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Weekly, so a new stdlib CVE surfaces on main rather than on open PRs.
+    - cron: "0 6 * * 1"
 
 jobs:
   discover:
@@ -25,6 +28,7 @@ jobs:
     name: Test & Lint (${{ matrix.module }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         module: ${{ fromJSON(needs.discover.outputs.modules) }}
     steps:
@@ -52,6 +56,14 @@ jobs:
           version: latest
           install-mode: goinstall
           working-directory: ${{ matrix.module }}
+
+      # govulncheck reports stdlib vulnerabilities against the toolchain it runs
+      # under, so scanning on the go.mod minimum reddens CI on every Go patch
+      # release. The steps above already proved that minimum builds and passes.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache-dependency-path: ${{ matrix.module }}/go.sum
 
       - name: govulncheck
         working-directory: ${{ matrix.module }}
