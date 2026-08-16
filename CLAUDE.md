@@ -85,16 +85,41 @@ If a future module does depend on another, when working locally:
 - `<module>/mock/` sub-packages provide test doubles intended for import in *other* projects — use these when the real implementation is too heavy for unit tests.
 - Do not put shared helpers in the root of the repo — if something is needed by multiple modules, it either belongs in its own module or indicates the modules should be merged.
 
+## Git Workflow
+
+All work happens on a short-lived branch — never directly on `main`. Branch
+first, then make changes.
+
+Branches are named `<type>/<short-topic>`, using the same types as the commit
+messages below: `feat/cache-items-context`, `fix/pki-expired-root`,
+`docs/mtls-handshake`, `refactor/cache-constraint`.
+
+**Rules for agents:**
+- Never commit unless explicitly asked. Leave changes in the working tree so
+  they can be reviewed and tried out first.
+- Never push, never tag, never merge to `main`. These are the human's calls,
+  every time, even if the work looks finished and `task verify` is green.
+- "Commit this" means commit only. It is not permission to push or tag.
+- Approval to commit once does not carry over to the next change.
+
+A branch is merged into `main` by the human once the change has been tried in
+practice. Tags are cut on `main` after the merge, never on the branch. Delete
+the branch once merged.
+
 ## Release & Tagging
- 
+
+Releases are cut by the human, on `main`, after a change branch has been
+merged. This section is reference material — it is not a cue to tag.
+
 Modules are tagged independently using the format `<module>/vX.Y.Z` (e.g. `certkit/v1.2.0`). Go's toolchain resolves these natively.
  
-**Tagging checklist before a release:**
-1. All `replace` directives removed from `go.mod`.
-2. `go mod tidy` has been run.
-3. `go test -race ./...` passes.
-4. `golangci-lint run ./...` is clean.
-5. Tag format: `git tag <module>/vX.Y.Z && git push origin <module>/vX.Y.Z
+**Preconditions for a release:**
+1. The change has been merged to `main` from its `<type>/<topic>` branch.
+2. All `replace` directives removed from `go.mod`.
+3. `go mod tidy` has been run.
+4. `go test -race ./...` passes.
+5. `golangci-lint run ./...` is clean.
+6. Tag format: `git tag <module>/vX.Y.Z && git push origin <module>/vX.Y.Z`
 
 Follow semver strictly:
 - **Patch** (`v1.0.x`): bug fixes, no API change.
