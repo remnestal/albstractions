@@ -15,7 +15,7 @@ jobs:
     outputs:
       modules: ${{ steps.set.outputs.modules }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: set
         run: |
           modules=$(find . -name go.mod -not -path './.git/*' \
@@ -32,9 +32,9 @@ jobs:
       matrix:
         module: ${{ fromJSON(needs.discover.outputs.modules) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: ${{ matrix.module }}/go.mod
 
@@ -60,7 +60,7 @@ jobs:
       # govulncheck reports stdlib vulnerabilities against the toolchain it runs
       # under, so scanning on the go.mod minimum reddens CI on every Go patch
       # release. The steps above already proved that minimum builds and passes.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           cache-dependency-path: ${{ matrix.module }}/go.sum
