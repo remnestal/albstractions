@@ -11,6 +11,12 @@
 version: "3"
 
 vars:
+  # govulncheck reports stdlib vulnerabilities against the toolchain it runs
+  # under, so scanning on each module's go.mod minimum reddens the gate on
+  # every Go patch release. Scan on a current toolchain instead; the go
+  # directive stays a minimum-version claim, not a security pin. Bump this
+  # alongside CI's stable scan.
+  SCAN_TOOLCHAIN: go1.26.7
   MODULES:
     sh: find . -name go.mod -not -path './.git/*' | xargs -n1 dirname | sort
 
@@ -72,7 +78,7 @@ tasks:
     desc: Run govulncheck in every module
     cmds:
       - for: { var: MODULES }
-        cmd: 'echo ">> vulncheck {{.ITEM}}" && cd {{.ITEM}} && PATH="$(go env GOPATH)/bin:$PATH" govulncheck ./...'
+        cmd: 'echo ">> vulncheck {{.ITEM}}" && cd {{.ITEM}} && GOTOOLCHAIN={{.SCAN_TOOLCHAIN}} PATH="$(go env GOPATH)/bin:$PATH" govulncheck ./...'
 
   hooks:install:
     desc: Enable the versioned pre-commit hook for this clone
