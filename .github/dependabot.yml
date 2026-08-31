@@ -1,36 +1,26 @@
 version: 2
+
+# Modules are matched by glob rather than listed one per directory, so a new
+# module is picked up without editing this file — the same way the CI matrix
+# and the Taskfile discover modules from their go.mod files.
+#
+# Each ecosystem opens a single grouped pull request, so one dependency
+# bumped across every module arrives as one review rather than one per
+# module.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
 
   - package-ecosystem: gomod
-    directory: /certkit
+    directories:
+      - /*
     schedule:
       interval: weekly
-
-  - package-ecosystem: gomod
-    directory: /schedule
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: gomod
-    directory: /throttle
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: gomod
-    directory: /lifecycle
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: gomod
-    directory: /retry
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: gomod
-    directory: /cache
-    schedule:
-      interval: weekly
+    groups:
+      gomod:
+        patterns: ["*"]
