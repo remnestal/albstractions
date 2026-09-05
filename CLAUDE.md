@@ -62,9 +62,12 @@ find . -name go.mod | xargs -I{} dirname {} | xargs -I{} sh -c 'cd {} && golangc
 1. Create a new directory at the repo root: `mkdir <module>`
 2. Initialise the module: `cd <module> && go mod init github.com/remnestal/albstractions/<module>`
 3. Follow the package layout conventions below.
-4. Create `<module>/README.md` with the module's purpose, install command, and a minimal usage example.
-5. Add the module to the modules table in the root `README.md`.
-6. Start versioning from `v0.1.0`.
+4. Copy the root `LICENCE` into `<module>/LICENCE`. A module's published zip
+   contains only its own subdirectory, so a licence at the repo root is invisible
+   to pkg.go.dev and it will withhold the documentation as unlicensed.
+5. Create `<module>/README.md` following the shape in Package Layout below.
+6. Add the module to the modules table in the root `README.md`.
+7. Start versioning from `v0.1.0`.
 
 Dependabot needs no edit — `.github/dependabot.yml` matches modules by glob.
 
