@@ -11,7 +11,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     groups:
       actions:
         patterns: ["*"]
@@ -20,7 +20,7 @@ updates:
     directories:
       - /*
     schedule:
-      interval: weekly
+      interval: daily
     groups:
       gomod:
         patterns: ["*"]
