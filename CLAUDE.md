@@ -13,7 +13,7 @@ This file provides guidance to Claude Code when working with code in this reposi
  
 ## Environment
 
-This is a private GitHub repo under `github.com/remnestal/albstractions`.
+This is a public GitHub repo under `github.com/remnestal/albstractions`. Modules are published through the Go module proxy, so tags are permanent once fetched.
 
 ## Commands
 
