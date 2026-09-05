@@ -1,5 +1,7 @@
 # retry
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/remnestal/albstractions/retry.svg)](https://pkg.go.dev/github.com/remnestal/albstractions/retry)
+
 Re-invokes a fallible function until it succeeds, with between-attempt spacing supplied by a pluggable schedule and an explicit stop condition.
 
 ```bash
@@ -8,9 +10,11 @@ go get github.com/remnestal/albstractions/retry
 
 ## Overview
 
-A `Retry` is constructed from a [`Schedule`](https://pkg.go.dev/github.com/remnestal/albstractions/schedule) (between-attempt delay) and a `StopFunc` (when to give up). The first attempt always runs; the `StopFunc` is consulted only after a failed attempt. If the supplied schedule implements `Reset()` (e.g. `schedule.Exponential`), `Do` resets it at the start of each invocation so a single `*Retry` is safe to reuse.
+A `Retry` is constructed from a [`Schedule`](https://pkg.go.dev/github.com/remnestal/albstractions/schedule), which supplies the between-attempt delay, and a `StopFunc`, which decides when to give up. The first attempt always runs; the `StopFunc` is consulted only after a failed attempt.
 
-Stop conditions are composable: assemble budgets with `Any` (whichever fires first) or `All` (only when all fire) from the building blocks `MaxAttempts`, `MaxElapsed`, and `OnError`.
+Stop conditions are composable. Assemble a budget with `Any` (whichever fires first) or `All` (only when all fire) from the building blocks `MaxAttempts`, `MaxElapsed`, and `OnError`.
+
+Both dependencies are declared as local interfaces, so `retry` imports nothing. Any type with a `Next() time.Duration` method fits, including every implementation in the `schedule` module.
 
 ## Usage
 
@@ -45,6 +49,16 @@ r := retry.New(
 err := r.Do(ctx, callFlakyAPI)
 ```
 
+The same `*Retry` can be reused across independent calls. If the supplied schedule implements `Resetter`:
+
+```go
+type Resetter interface {
+    Reset()
+}
+```
+
+then `Do` resets it at the start of every invocation, so backoff never carries over from an earlier call. `schedule.Exponential` implements it. Concurrent calls to `Do` share the schedule's state, so a stateful schedule is best reused sequentially.
+
 ## Stop conditions
 
 | Builder | Halts when |
@@ -57,7 +71,16 @@ err := r.Do(ctx, callFlakyAPI)
 
 ## Observation hook
 
-`WithHook` installs a callback fired exactly once per attempt — including the successful one (with `Err == nil`). The hook is purely observational; it cannot influence retry behaviour and must not block.
+`WithHook` installs a callback fired exactly once per attempt, including the successful one, where `Err` is nil. The hook is purely observational; it cannot influence retry behaviour and must not block.
+
+The `AttemptInfo` it receives carries:
+
+| Field | Meaning |
+|-------|---------|
+| `Attempt` | 1-based attempt number |
+| `Elapsed` | Time since `Do` was called |
+| `Err` | The attempt's error, or nil on success |
+| `Next` | Delay before the next attempt, or 0 when no retry follows |
 
 ## Cancellation
 

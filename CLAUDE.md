@@ -82,7 +82,23 @@ If a future module does depend on another, when working locally:
 ## Package Layout
  
 - Each module's root package exposes the primary API.
-- Each module ships a `README.md` at its root: purpose, install command, and a minimal usage example.
+- Each module ships a `README.md` at its root. Its job is to advertise what the
+  package offers, not to restate godoc. Godoc is the exhaustive per-symbol
+  reference; the README should make a reader realise a capability exists. The
+  shape is:
+  1. Purpose and install command.
+  2. A short overview of the core interface or type.
+  3. Two or three substantial usage scenarios, each carrying several features at
+     once. Prefer few realistic examples over one micro-snippet per option, and
+     leave composition for the reader to infer.
+  4. An options/API reference table, which is where the long tail of options
+     goes without spawning more snippets.
+  5. A short section on genuinely surprising semantics, where any exist.
+- READMEs carry a pkg.go.dev badge under the title, not a closing reference
+  link, and are written without hand-wrapped prose: one physical line per
+  paragraph or list item, letting the renderer wrap.
+- Every code block in a README must compile against the current API. When an
+  exported signature changes, update the module README in the same change.
 - `<module>/mock/` sub-packages provide test doubles intended for import in *other* projects — use these when the real implementation is too heavy for unit tests.
 - Do not put shared helpers in the root of the repo — if something is needed by multiple modules, it either belongs in its own module or indicates the modules should be merged.
 

@@ -1,5 +1,7 @@
 # schedule
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/remnestal/albstractions/schedule.svg)](https://pkg.go.dev/github.com/remnestal/albstractions/schedule)
+
 Configurable delay strategies for throttling, rate-limiting, and backoff.
 
 ```bash
@@ -57,17 +59,22 @@ s := schedule.NewUniform(100*time.Millisecond, 500*time.Millisecond,
 
 ### Sine
 
-Oscillates between lo and hi following a raised cosine curve over the given period. Starts at lo, peaks at hi at the midpoint, and returns to lo at the end of each period. Phase is derived from the wall clock, not call count — two calls at the same instant return the same delay.
+Oscillates between lo and hi following a raised cosine curve over the given period. Starts at lo, peaks at hi at the midpoint, and returns to lo at the end of each period. Phase is derived from the wall clock rather than the call count, so two calls at the same instant return the same delay and the cadence is independent of how often `Next` is called.
 
 ```go
 s := schedule.NewSine(100*time.Millisecond, 1*time.Second, time.Minute)
+
+// With an injected clock, for deterministic tests:
+s := schedule.NewSine(100*time.Millisecond, 1*time.Second, time.Minute,
+    schedule.WithClock(func() time.Time { return fixed }),
+)
 ```
 
 ### TokenBucket
 
-Adapts any rate limiter that hands out reservations to the `Schedule` interface. Each call reserves capacity and returns the wait until it is available. Note: capacity is consumed on every call regardless of whether the caller actually waits.
+Adapts any rate limiter that hands out reservations to the `Schedule` interface. Each call reserves capacity and returns the wait until it is available. Note that capacity is consumed on every call regardless of whether the caller actually waits.
 
-The limiter and its reservation are declared as interfaces, so the module carries no dependency on `golang.org/x/time` — but `*rate.Limiter` satisfies them, so one can be passed directly:
+The limiter and its reservation are declared as interfaces, so the module carries no dependency on `golang.org/x/time`. A `*rate.Limiter` satisfies them structurally, so one can be passed directly:
 
 ```go
 type Reservation interface {
@@ -83,3 +90,13 @@ type Limiter[R Reservation] interface {
 ```go
 s := schedule.NewTokenBucket(rate.NewLimiter(rate.Every(time.Second), 10))
 ```
+
+## Options
+
+| Option | Applies to | Effect |
+|--------|-----------|--------|
+| `WithFactor(f)` | `Exponential` | Growth multiplier per call. Default 2.0 |
+| `WithSource(src)` | `Uniform` | Random source, for deterministic tests. Default a seeded PCG |
+| `WithClock(fn)` | `Sine` | Clock used to derive phase. Default `time.Now` |
+
+Every constructor panics on an invalid range, such as a negative delay or a `hi` below `lo`, so misconfiguration surfaces at startup rather than as a silently wrong cadence.
