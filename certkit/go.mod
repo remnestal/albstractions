@@ -1,6 +1,6 @@
 module github.com/remnestal/albstractions/certkit
 
-go 1.26.4
+go 1.27.1
 
 require github.com/stretchr/testify v1.12.1
 
