@@ -126,6 +126,22 @@ regression test across commits.
   every time, even if the work looks finished and `task verify` is green.
 - "Commit this" means commit only. It is not permission to push or tag.
 - Approval to commit once does not carry over to the next change.
+- "Open a PR" covers pushing the branch and opening the PR, nothing more. CI
+  only runs for pull requests into `main` and pushes to `main`, so a PR is how a
+  branch gets gated; pushing the branch alone does not start CI.
+
+**Pull requests.** A PR is the traceable record of what was merged into `main`
+and why, and it brings the CI gate with it. The commits carry the detail, so
+keep the PR brief. The title is the first line of the commit for a
+single-commit branch. For several commits it is a short, plain description of
+the whole change, without a semantic `<type>(<module>):` prefix. The description is:
+- An optional one- or two-sentence introduction, only when the commits are a
+  batch whose shared context deserves a line.
+- A list of the commits in the PR, one per line, each leading with its short
+  hash so it links to the commit.
+
+Do not restate the diff, the rationale already in the commit bodies, or a test
+plan.
 
 A branch is merged into `main` by the human once the change has been tried in
 practice. Tags are cut on `main` after the merge, never on the branch.
