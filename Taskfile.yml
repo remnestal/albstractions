@@ -16,7 +16,7 @@ vars:
   # every Go patch release. Scan on a current toolchain instead; the go
   # directive stays a minimum-version claim, not a security pin. Bump this
   # alongside CI's stable scan.
-  SCAN_TOOLCHAIN: go1.27.1
+  SCAN_TOOLCHAIN: go1.27.2
   MODULES:
     sh: find . -name go.mod -not -path './.git/*' | xargs -n1 dirname | sort
 

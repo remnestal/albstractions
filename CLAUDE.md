@@ -114,6 +114,11 @@ Branches are named `<type>/<short-topic>`, using the same types as the commit
 messages below: `feat/cache-items-context`, `fix/pki-expired-root`,
 `docs/mtls-handshake`, `refactor/cache-constraint`.
 
+**Fixes are atomic.** A `fix` commit contains the change and the test that
+proves the bug cannot come back, together. The test must fail without the fix
+and pass with it, so the commit is its own evidence. Do not split a fix from its
+regression test across commits.
+
 **Rules for agents:**
 - Never commit unless explicitly asked. Leave changes in the working tree so
   they can be reviewed and tried out first.
