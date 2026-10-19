@@ -221,7 +221,8 @@ func (g *Group) Done() <-chan struct{} {
 }
 
 // Ready returns a channel that is closed once all goroutines registered before
-// [Group.Run] was called have been spawned.
+// [Group.Run] was called have been spawned and any [WithSignals] handlers are
+// installed.
 //
 // It provides a synchronisation point for dependent services or health checks
 // that should not start until the group is fully running.
@@ -283,8 +284,6 @@ func (g *Group) run() error {
 		})
 	}
 
-	close(g.ready)
-
 	if g.cfg.parentCtx != nil {
 		go func() {
 			select {
@@ -307,6 +306,8 @@ func (g *Group) run() error {
 			}
 		}()
 	}
+
+	close(g.ready)
 
 	<-g.ctx.Done()
 

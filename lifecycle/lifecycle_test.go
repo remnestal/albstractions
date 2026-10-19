@@ -140,7 +140,7 @@ func TestRequire(t *testing.T) {
 	})
 }
 
-func TestOnShutdown(t *testing.T) {
+func TestDefer(t *testing.T) {
 	t.Parallel()
 
 	t.Run("callbacks run in fifo registration order", func(t *testing.T) {
@@ -316,7 +316,7 @@ func TestRun(t *testing.T) {
 		runErr := make(chan error, 1)
 		go func() { runErr <- g.Run() }()
 
-		time.Sleep(10 * time.Millisecond)
+		<-g.Ready() // signal handlers are installed once Ready closes
 		require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGUSR1))
 
 		select {
@@ -481,11 +481,12 @@ func TestShutdownCause(t *testing.T) {
 		runErr := make(chan error, 1)
 		go func() { runErr <- g.Run() }()
 
-		time.Sleep(10 * time.Millisecond)
+		<-g.Ready() // signal handlers are installed once Ready closes
 		require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGUSR2))
 
 		select {
-		case <-runErr:
+		case err := <-runErr:
+			assert.NoError(t, err)
 		case <-time.After(2 * time.Second):
 			t.Fatal("Run did not return")
 		}

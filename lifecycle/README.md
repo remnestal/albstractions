@@ -54,7 +54,7 @@ if err := g.Run(); err != nil {
 
 ### Readiness and shutdown cause
 
-`Ready` closes once every goroutine registered before `Run` has been spawned, which gives health checks and dependent services a synchronisation point. `Done` closes once `Run` has fully returned, so shutdown can be observed without blocking on `Run` itself.
+`Ready` closes once every goroutine registered before `Run` has been spawned and any signal handlers are installed, which gives health checks and dependent services a synchronisation point. `Done` closes once `Run` has fully returned, so shutdown can be observed without blocking on `Run` itself.
 
 ```go
 go func() {
@@ -99,7 +99,7 @@ To fold the group into an existing context tree, pass `WithContext`. Cancelling 
 | `Defer(timeout, fn)` | Teardown callback with its own deadline |
 | `Run() error` | Starts everything, blocks until shutdown completes. Idempotent |
 | `Shutdown()` | Triggers shutdown. Idempotent, and leaves `ShutdownCause` nil |
-| `Ready() <-chan struct{}` | Closed once pre-`Run` goroutines are spawned |
+| `Ready() <-chan struct{}` | Closed once pre-`Run` goroutines are spawned and signal handlers installed |
 | `Done() <-chan struct{}` | Closed once `Run` has returned |
 | `Context() context.Context` | The group's context, cancelled when shutdown begins |
 | `ShutdownCause() error` | Why shutdown happened, or nil if it was requested |
