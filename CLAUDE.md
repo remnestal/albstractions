@@ -128,8 +128,21 @@ regression test across commits.
 - Approval to commit once does not carry over to the next change.
 
 A branch is merged into `main` by the human once the change has been tried in
-practice. Tags are cut on `main` after the merge, never on the branch. Delete
-the branch once merged.
+practice. Tags are cut on `main` after the merge, never on the branch.
+
+**Cleanup.** Once the branch is merged, delete it both locally and on the
+remote, then switch back to an up-to-date `main`:
+
+```bash
+git checkout main && git pull --ff-only
+git branch -d <type>/<topic>
+git push origin --delete <type>/<topic>   # skip if GitHub already deleted it
+git fetch --prune
+```
+
+GitHub may delete the remote branch on merge; `git push origin --delete` then
+reports that the ref does not exist, which is fine. Use `-d`, not `-D`, so git
+refuses to drop a branch that is not fully merged.
 
 ## Release & Tagging
 
