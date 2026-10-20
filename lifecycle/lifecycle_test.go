@@ -3,6 +3,7 @@ package lifecycle_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -284,6 +285,57 @@ func TestServe(t *testing.T) {
 		defer mu.Unlock()
 		// server drained (request completed) before callback ran
 		assert.Equal(t, []string{"request", "callback"}, order)
+	})
+
+	t.Run("server registered concurrently with shutdown is always shut down", func(t *testing.T) {
+		t.Parallel()
+		// The race cannot be forced from outside the package, so it is
+		// provoked repeatedly: several Serve calls race one Shutdown.
+		const iterations, servers = 100, 8
+		for range iterations {
+			g := lifecycle.New(lifecycle.WithGracefulTimeout(20 * time.Millisecond))
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+			runErr := make(chan error, 1)
+			go func() { runErr <- g.Run() }()
+			<-g.Ready()
+
+			var listened [servers]atomic.Bool
+			shutDown := make([]chan struct{}, servers)
+			srvs := make([]*http.Server, servers)
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			for i := range servers {
+				shutDown[i] = make(chan struct{})
+				srvs[i] = &http.Server{
+					Addr: "127.0.0.1:0",
+					BaseContext: func(net.Listener) context.Context {
+						listened[i].Store(true)
+						return t.Context()
+					},
+				}
+				srvs[i].RegisterOnShutdown(func() { close(shutDown[i]) })
+				t.Cleanup(func() { _ = srvs[i].Close() })
+				wg.Go(func() { <-start; g.Serve(fmt.Sprint(i), srvs[i]) })
+			}
+			wg.Go(func() { <-start; g.Shutdown() })
+			close(start)
+			wg.Wait()
+			require.NoError(t, <-runErr)
+
+			for i := range servers {
+				// A server that started serving must have been shut down.
+				// Shutdown runs its hooks on their own goroutines, hence
+				// the wait, which only elapses when the server leaked.
+				if !listened[i].Load() {
+					continue
+				}
+				select {
+				case <-shutDown[i]:
+				case <-time.After(time.Second):
+					require.FailNow(t, "server still serving after Run returned", "server %d", i)
+				}
+			}
+		}
 	})
 }
 
