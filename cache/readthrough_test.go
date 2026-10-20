@@ -200,72 +200,64 @@ func TestWithSingleFlight(t *testing.T) {
 
 	t.Run("collapses concurrent loads of the same key", func(t *testing.T) {
 		t.Parallel()
-		var calls atomic.Int64
-		entered := make(chan struct{}, 1)
-		release := make(chan struct{})
-		loader := func(context.Context, string) (int, error) {
-			calls.Add(1)
-			select {
-			case entered <- struct{}{}:
-			default:
+		synctest.Test(t, func(t *testing.T) {
+			var calls atomic.Int64
+			release := make(chan struct{})
+			loader := func(context.Context, string) (int, error) {
+				calls.Add(1)
+				<-release
+				return 42, nil
 			}
-			<-release
-			return 42, nil
-		}
-		rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+			rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
 
-		const n = 20
-		var wg sync.WaitGroup
-		for range n {
-			wg.Go(func() {
-				v, ok := rt.Get("k")
-				assert.True(t, ok)
-				assert.Equal(t, 42, v)
-			})
-		}
-		<-entered
-		time.Sleep(20 * time.Millisecond)
-		close(release)
-		wg.Wait()
+			const n = 20
+			var wg sync.WaitGroup
+			for range n {
+				wg.Go(func() {
+					v, ok := rt.Get("k")
+					assert.True(t, ok)
+					assert.Equal(t, 42, v)
+				})
+			}
+			synctest.Wait() // the leader is in the loader and every other caller waits on it
+			close(release)
+			wg.Wait()
 
-		assert.Equal(t, int64(1), calls.Load())
+			assert.Equal(t, int64(1), calls.Load())
+		})
 	})
 
 	t.Run("shares the loader error with all waiters", func(t *testing.T) {
 		t.Parallel()
-		boom := errors.New("boom")
-		var calls atomic.Int64
-		entered := make(chan struct{}, 1)
-		release := make(chan struct{})
-		loader := func(context.Context, string) (int, error) {
-			calls.Add(1)
-			select {
-			case entered <- struct{}{}:
-			default:
+		synctest.Test(t, func(t *testing.T) {
+			boom := errors.New("boom")
+			var calls atomic.Int64
+			release := make(chan struct{})
+			loader := func(context.Context, string) (int, error) {
+				calls.Add(1)
+				<-release
+				return 0, boom
 			}
-			<-release
-			return 0, boom
-		}
-		rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+			rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
 
-		const n = 10
-		var wg sync.WaitGroup
-		errs := make([]error, n)
-		for i := range n {
-			wg.Go(func() {
-				_, _, err := rt.GetContext(t.Context(), "k")
-				errs[i] = err
-			})
-		}
-		<-entered
-		time.Sleep(20 * time.Millisecond)
-		close(release)
-		wg.Wait()
+			const n = 10
+			var wg sync.WaitGroup
+			errs := make([]error, n)
+			for i := range n {
+				wg.Go(func() {
+					_, _, err := rt.GetContext(t.Context(), "k")
+					errs[i] = err
+				})
+			}
+			synctest.Wait() // the leader is in the loader and every other caller waits on it
+			close(release)
+			wg.Wait()
 
-		assert.Equal(t, int64(1), calls.Load())
-		for _, err := range errs {
-			assert.ErrorIs(t, err, boom)
-		}
+			assert.Equal(t, int64(1), calls.Load())
+			for _, err := range errs {
+				assert.ErrorIs(t, err, boom)
+			}
+		})
 	})
 
 	t.Run("loads again after the flight completes", func(t *testing.T) {
@@ -319,46 +311,42 @@ func TestWithSingleFlight(t *testing.T) {
 
 	t.Run("waiters receive an error when the leader's load panics", func(t *testing.T) {
 		t.Parallel()
-		var calls atomic.Int64
-		entered := make(chan struct{}, 1)
-		release := make(chan struct{})
-		loader := func(context.Context, string) (int, error) {
-			calls.Add(1)
-			select {
-			case entered <- struct{}{}:
-			default:
+		synctest.Test(t, func(t *testing.T) {
+			var calls atomic.Int64
+			release := make(chan struct{})
+			loader := func(context.Context, string) (int, error) {
+				calls.Add(1)
+				<-release
+				panic("loader boom")
 			}
-			<-release
-			panic("loader boom")
-		}
-		rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+			rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
 
-		const n = 10
-		var wg sync.WaitGroup
-		errs := make([]error, n)
-		for i := range n {
-			wg.Go(func() {
-				defer func() { _ = recover() }() // the leader re-panics; absorb it
-				_, _, err := rt.GetContext(t.Context(), "k")
-				errs[i] = err
-			})
-		}
-		<-entered
-		time.Sleep(20 * time.Millisecond)
-		close(release)
-		wg.Wait()
-
-		// Only the leader ran the loader; every waiter received an error rather
-		// than a spurious (zero, true) hit. The leader's slot stays nil because
-		// its GetContext panicked instead of returning.
-		assert.Equal(t, int64(1), calls.Load())
-		got := 0
-		for _, err := range errs {
-			if err != nil {
-				got++
+			const n = 10
+			var wg sync.WaitGroup
+			errs := make([]error, n)
+			for i := range n {
+				wg.Go(func() {
+					defer func() { _ = recover() }() // the leader re-panics; absorb it
+					_, _, err := rt.GetContext(t.Context(), "k")
+					errs[i] = err
+				})
 			}
-		}
-		assert.Equal(t, n-1, got)
+			synctest.Wait() // the leader is in the loader and every other caller waits on it
+			close(release)
+			wg.Wait()
+
+			// Only the leader ran the loader; every waiter received an error rather
+			// than a spurious (zero, true) hit. The leader's slot stays nil because
+			// its GetContext panicked instead of returning.
+			assert.Equal(t, int64(1), calls.Load())
+			got := 0
+			for _, err := range errs {
+				if err != nil {
+					got++
+				}
+			}
+			assert.Equal(t, n-1, got)
+		})
 	})
 
 	t.Run("a waiter is not failed by the leader's cancellation", func(t *testing.T) {
