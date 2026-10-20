@@ -155,14 +155,18 @@ func TestBackend_Calls(t *testing.T) {
 		b.Set("k", 5, cache.After(time.Minute))
 		b.Get("k")
 		b.Delete("k")
+		b.Items()
+		b.ItemsContext(t.Context())
 
 		calls := b.Calls()
-		require.Len(t, calls, 3)
+		require.Len(t, calls, 5)
 		assert.Equal(t, "Set", calls[0].Op)
 		assert.Equal(t, 5, calls[0].Val)
 		assert.Equal(t, cache.After(time.Minute), calls[0].Exp)
 		assert.Equal(t, "Get", calls[1].Op)
 		assert.Equal(t, "Delete", calls[2].Op)
+		assert.Equal(t, "Items", calls[3].Op)
+		assert.Equal(t, "Items", calls[4].Op)
 	})
 
 	t.Run("records interactions driven by a wrapper", func(t *testing.T) {
