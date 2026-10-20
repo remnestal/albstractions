@@ -45,6 +45,11 @@ const Unbounded = -1
 // Callers beyond the cap block (honouring ctx) until a slot frees. Pass
 // [Unbounded] for no limit.
 //
+// A caller holds its slot while it waits for its dispatch time, so the cap
+// counts paced waiters as well as running calls. This does not lower the start
+// rate, which the schedule sets, but it bounds how far ahead the cadence can be
+// reserved.
+//
 // Panics if n == 0 or n < -1. Default: 1 (serial).
 func WithMaxInflight(n int) Option {
 	if n == 0 || n < -1 {
@@ -73,18 +78,41 @@ func New(s Schedule, opts ...Option) *Throttle {
 	return t
 }
 
-// Do waits until the next allowed dispatch time, then runs fn.
+// Do waits for an in-flight slot, then for its dispatch time, then runs fn.
 //
-// Consecutive Do calls on the same Throttle are spaced by at least s.Next();
-// the first call is not delayed. If ctx is cancelled during the wait, Do
-// returns ctx.Err() without calling fn; the internal cadence still advances
-// so a later caller cannot burst.
+// Consecutive Do calls on the same Throttle start at least s.Next() apart,
+// even when callers queued behind a slow fn; the first call is not delayed.
+//
+// If ctx is done before fn runs, Do returns ctx.Err() without calling fn. A
+// caller cancelled during the paced wait has already taken its turn, so the
+// cadence still advances and a later caller cannot burst. A caller cancelled
+// before Do or while queued for an in-flight slot takes no turn and leaves the
+// cadence untouched.
 func (t *Throttle) Do(ctx context.Context, fn func(context.Context) error) error {
-	wait := t.nextSlot(t.schedule.Next())
-	if err := sleep(ctx, wait); err != nil {
+	// Take the in-flight slot before the pacing slot, so a caller that queued
+	// behind a slow fn still waits a full delay after the previous start.
+	if t.sem != nil {
+		select {
+		case t.sem <- struct{}{}:
+			defer func() { <-t.sem }()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	// The select above picks at random when both cases are ready; a cancelled
+	// caller must not take a turn either way.
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return t.doConcurrent(ctx, fn)
+	if err := t.pace(ctx); err != nil {
+		return err
+	}
+	return fn(ctx)
+}
+
+// pace blocks until the caller's dispatch time, advancing the cadence.
+func (t *Throttle) pace(ctx context.Context) error {
+	return sleep(ctx, t.nextSlot(t.schedule.Next()))
 }
 
 // nextSlot advances the schedule by delay and returns how long the caller must
@@ -99,19 +127,6 @@ func (t *Throttle) nextSlot(delay time.Duration) time.Duration {
 	wait := t.nextAllowed.Sub(now)
 	t.nextAllowed = t.nextAllowed.Add(delay)
 	return wait
-}
-
-// doConcurrent acquires the semaphore (if set), calls fn, then releases the slot.
-func (t *Throttle) doConcurrent(ctx context.Context, fn func(context.Context) error) error {
-	if t.sem != nil {
-		select {
-		case t.sem <- struct{}{}:
-			defer func() { <-t.sem }()
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	return fn(ctx)
 }
 
 // sleep waits for d, returning ctx.Err() if the context is cancelled first.
