@@ -192,7 +192,6 @@ func TestDefer(t *testing.T) {
 		g := lifecycle.New()
 		var order []int
 		for i := range 5 {
-			i := i
 			g.Defer(100*time.Millisecond, func(_ context.Context) { order = append(order, i) })
 		}
 		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
