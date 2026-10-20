@@ -93,14 +93,16 @@ func TestRequire(t *testing.T) {
 
 	t.Run("context error is not collected", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		g.Require("ctx-aware", func(ctx context.Context) error {
-			<-ctx.Done()
-			return ctx.Err()
-		})
-		go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Require("ctx-aware", func(ctx context.Context) error {
+				<-ctx.Done()
+				return ctx.Err()
+			})
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
 
-		assert.NoError(t, g.Run())
+			assert.NoError(t, g.Run())
+		})
 	})
 
 	t.Run("own context error is returned while the group is running", func(t *testing.T) {
@@ -167,20 +169,22 @@ func TestRequire(t *testing.T) {
 
 	t.Run("no-op after shutdown completes", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		done := make(chan error, 1)
-		go func() { done <- g.Run() }()
-		time.Sleep(10 * time.Millisecond)
-		g.Shutdown()
-		require.NoError(t, <-done)
+			done := make(chan error, 1)
+			go func() { done <- g.Run() }()
+			time.Sleep(10 * time.Millisecond)
+			g.Shutdown()
+			require.NoError(t, <-done)
 
-		var ran atomic.Bool
-		assert.NotPanics(t, func() {
-			g.Require("late", func(_ context.Context) error { ran.Store(true); return nil })
+			var ran atomic.Bool
+			assert.NotPanics(t, func() {
+				g.Require("late", func(_ context.Context) error { ran.Store(true); return nil })
+			})
+			assert.False(t, ran.Load())
 		})
-		assert.False(t, ran.Load())
 	})
 }
 
@@ -189,34 +193,38 @@ func TestDefer(t *testing.T) {
 
 	t.Run("callbacks run in fifo registration order", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		var order []int
-		for i := range 5 {
-			g.Defer(100*time.Millisecond, func(_ context.Context) { order = append(order, i) })
-		}
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
-		go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			var order []int
+			for i := range 5 {
+				g.Defer(100*time.Millisecond, func(_ context.Context) { order = append(order, i) })
+			}
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
 
-		require.NoError(t, g.Run())
-		assert.Equal(t, []int{0, 1, 2, 3, 4}, order)
+			require.NoError(t, g.Run())
+			assert.Equal(t, []int{0, 1, 2, 3, 4}, order)
+		})
 	})
 
 	t.Run("no-op after shutdown begins", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		done := make(chan error, 1)
-		go func() { done <- g.Run() }()
-		time.Sleep(10 * time.Millisecond)
-		g.Shutdown()
-		require.NoError(t, <-done)
+			done := make(chan error, 1)
+			go func() { done <- g.Run() }()
+			time.Sleep(10 * time.Millisecond)
+			g.Shutdown()
+			require.NoError(t, <-done)
 
-		var called atomic.Bool
-		assert.NotPanics(t, func() {
-			g.Defer(time.Second, func(_ context.Context) { called.Store(true) })
+			var called atomic.Bool
+			assert.NotPanics(t, func() {
+				g.Defer(time.Second, func(_ context.Context) { called.Store(true) })
+			})
+			assert.False(t, called.Load())
 		})
-		assert.False(t, called.Load())
 	})
 
 	t.Run("no-op when Shutdown precedes Run", func(t *testing.T) {
@@ -242,23 +250,25 @@ func TestDefer(t *testing.T) {
 
 	t.Run("per-callback timeout bounds individual callback duration", func(t *testing.T) {
 		t.Parallel()
-		const cbTimeout = 50 * time.Millisecond
-		g := lifecycle.New(lifecycle.WithGracefulTimeout(time.Second))
-		var cbCtxCancelled atomic.Bool
-		g.Defer(cbTimeout, func(ctx context.Context) {
-			select {
-			case <-ctx.Done():
-				cbCtxCancelled.Store(true)
-			case <-time.After(10 * cbTimeout):
-			}
-		})
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
-		go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+		synctest.Test(t, func(t *testing.T) {
+			const cbTimeout = 50 * time.Millisecond
+			g := lifecycle.New(lifecycle.WithGracefulTimeout(time.Second))
+			var cbCtxCancelled atomic.Bool
+			g.Defer(cbTimeout, func(ctx context.Context) {
+				select {
+				case <-ctx.Done():
+					cbCtxCancelled.Store(true)
+				case <-time.After(10 * cbTimeout):
+				}
+			})
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
 
-		start := time.Now()
-		_ = g.Run()
-		assert.Less(t, time.Since(start), 4*cbTimeout)
-		assert.True(t, cbCtxCancelled.Load())
+			start := time.Now()
+			_ = g.Run()
+			assert.Equal(t, 10*time.Millisecond+cbTimeout, time.Since(start), "shutdown at 10ms, then one callback timeout")
+			assert.True(t, cbCtxCancelled.Load())
+		})
 	})
 }
 
@@ -510,20 +520,22 @@ func TestRun(t *testing.T) {
 
 	t.Run("graceful timeout bounds total shutdown duration", func(t *testing.T) {
 		t.Parallel()
-		const graceful = 50 * time.Millisecond
-		g := lifecycle.New(lifecycle.WithGracefulTimeout(graceful))
-		g.Defer(10*graceful, func(ctx context.Context) {
-			select {
-			case <-ctx.Done():
-			case <-time.After(10 * graceful):
-			}
-		})
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
-		go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+		synctest.Test(t, func(t *testing.T) {
+			const graceful = 50 * time.Millisecond
+			g := lifecycle.New(lifecycle.WithGracefulTimeout(graceful))
+			g.Defer(10*graceful, func(ctx context.Context) {
+				select {
+				case <-ctx.Done():
+				case <-time.After(10 * graceful):
+				}
+			})
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
 
-		start := time.Now()
-		_ = g.Run()
-		assert.Less(t, time.Since(start), 4*graceful)
+			start := time.Now()
+			_ = g.Run()
+			assert.Equal(t, 10*time.Millisecond+graceful, time.Since(start), "shutdown at 10ms, then the graceful budget")
+		})
 	})
 
 	t.Run("configured signal triggers shutdown", func(t *testing.T) {
@@ -627,33 +639,35 @@ func TestDone(t *testing.T) {
 
 	t.Run("closed only after Run returns", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		select {
-		case <-g.Done():
-			t.Fatal("Done should not be closed before Run")
-		default:
-		}
+			select {
+			case <-g.Done():
+				t.Fatal("Done should not be closed before Run")
+			default:
+			}
 
-		runErr := make(chan error, 1)
-		go func() { runErr <- g.Run() }()
-		time.Sleep(10 * time.Millisecond)
+			runErr := make(chan error, 1)
+			go func() { runErr <- g.Run() }()
+			time.Sleep(10 * time.Millisecond)
 
-		select {
-		case <-g.Done():
-			t.Fatal("Done should not be closed while Run is still running")
-		default:
-		}
+			select {
+			case <-g.Done():
+				t.Fatal("Done should not be closed while Run is still running")
+			default:
+			}
 
-		g.Shutdown()
-		require.NoError(t, <-runErr)
+			g.Shutdown()
+			require.NoError(t, <-runErr)
 
-		select {
-		case <-g.Done():
-		case <-time.After(time.Second):
-			t.Fatal("Done was not closed after Run returned")
-		}
+			select {
+			case <-g.Done():
+			case <-time.After(time.Second):
+				t.Fatal("Done was not closed after Run returned")
+			}
+		})
 	})
 }
 
@@ -710,12 +724,14 @@ func TestShutdownCause(t *testing.T) {
 
 	t.Run("nil for explicit Shutdown call", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
-		require.NoError(t, g.Run())
-		assert.Nil(t, g.ShutdownCause())
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+			require.NoError(t, g.Run())
+			assert.Nil(t, g.ShutdownCause())
+		})
 	})
 
 	t.Run("ErrSignal for OS signal", func(t *testing.T) {
@@ -793,24 +809,26 @@ func TestWithContext(t *testing.T) {
 
 	t.Run("parent cancellation triggers shutdown", func(t *testing.T) {
 		t.Parallel()
-		parent, cancel := context.WithCancel(t.Context())
-		defer cancel()
+		synctest.Test(t, func(t *testing.T) {
+			parent, cancel := context.WithCancel(t.Context())
+			defer cancel()
 
-		g := lifecycle.New(lifecycle.WithContext(parent))
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+			g := lifecycle.New(lifecycle.WithContext(parent))
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		runErr := make(chan error, 1)
-		go func() { runErr <- g.Run() }()
+			runErr := make(chan error, 1)
+			go func() { runErr <- g.Run() }()
 
-		time.Sleep(10 * time.Millisecond)
-		cancel()
+			time.Sleep(10 * time.Millisecond)
+			cancel()
 
-		select {
-		case err := <-runErr:
-			assert.NoError(t, err)
-		case <-time.After(2 * time.Second):
-			t.Fatal("Run did not return after parent context was cancelled")
-		}
+			select {
+			case err := <-runErr:
+				assert.NoError(t, err)
+			case <-time.After(2 * time.Second):
+				t.Fatal("Run did not return after parent context was cancelled")
+			}
+		})
 	})
 
 	t.Run("goroutines see the parent's values", func(t *testing.T) {
@@ -860,15 +878,17 @@ func TestWithContext(t *testing.T) {
 
 	t.Run("cause is parent context error", func(t *testing.T) {
 		t.Parallel()
-		parent, cancel := context.WithCancel(t.Context())
-		defer cancel()
+		synctest.Test(t, func(t *testing.T) {
+			parent, cancel := context.WithCancel(t.Context())
+			defer cancel()
 
-		g := lifecycle.New(lifecycle.WithContext(parent))
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+			g := lifecycle.New(lifecycle.WithContext(parent))
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		go func() { time.Sleep(10 * time.Millisecond); cancel() }()
-		require.NoError(t, g.Run())
-		assert.ErrorIs(t, g.ShutdownCause(), context.Canceled)
+			go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+			require.NoError(t, g.Run())
+			assert.ErrorIs(t, g.ShutdownCause(), context.Canceled)
+		})
 	})
 }
 
