@@ -334,9 +334,7 @@ func (g *Group) run() error {
 	g.mu.Unlock()
 
 	for _, fn := range pending {
-		g.wg.Go(func() {
-			fn()
-		})
+		g.wg.Go(fn)
 	}
 
 	if g.cfg.parentCtx != nil {
