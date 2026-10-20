@@ -67,7 +67,14 @@ func (e *Exponential) Next() time.Duration {
 	defer e.mu.Unlock()
 
 	d := e.current
-	e.current = time.Duration(math.Min(float64(e.maxDelay), float64(e.current)*e.factor))
+	// Compare in float64 before converting: float64(maxDelay) can round up past
+	// math.MaxInt64, and an out-of-range float-to-int conversion is
+	// implementation-defined (MinInt64 on amd64).
+	if next := float64(e.current) * e.factor; next < float64(e.maxDelay) {
+		e.current = time.Duration(next)
+	} else {
+		e.current = e.maxDelay
+	}
 	return d
 }
 

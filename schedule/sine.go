@@ -72,5 +72,10 @@ func (s *Sine) Next() time.Duration {
 	phase := float64(elapsed%s.period) / float64(s.period) * 2 * math.Pi
 	// (1-cos(phase))/2 maps [0,2π]→[0,1]: 0 at phase 0, 1 at phase π, 0 at phase 2π.
 	scale := (1 - math.Cos(phase)) / 2
-	return s.lo + time.Duration(float64(s.hi-s.lo)*scale)
+	span := s.hi - s.lo
+	offset := float64(span) * scale
+	if offset >= float64(span) { // also guards the float-to-int overflow near math.MaxInt64
+		return s.hi
+	}
+	return s.lo + time.Duration(offset)
 }
