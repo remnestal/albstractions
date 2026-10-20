@@ -113,7 +113,7 @@ free() // the key is no longer needed; do not wait for the deferred call
 
 ## Generation guarantees
 
-Certificates are back-dated one minute to absorb clock skew between hosts. A leaf is rejected if its validity would outlive the issuing CA, and the signing bundle is checked to be a real CA before use. Server and peer certificates require at least one SAN. Keys are emitted as PKCS#8 PEM.
+Certificates are back-dated one minute to absorb clock skew between hosts. A zero or negative validity is rejected. A leaf is rejected if its validity would outlive the issuing CA, and the signing bundle is checked to be a real CA before use. Server and peer certificates require at least one SAN. Keys are emitted as PKCS#8 PEM.
 
 ## Testing
 
