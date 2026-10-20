@@ -26,8 +26,15 @@ type ExponentialOption func(*Exponential)
 
 // WithFactor sets the growth multiplier applied on each call to Next.
 //
+// A factor of 1 keeps the delay constant at base.
+//
 // The default is 2.0.
+//
+// Panics if f < 1, NaN, or infinite.
 func WithFactor(f float64) ExponentialOption {
+	if !(f >= 1) || math.IsInf(f, 1) {
+		panic("schedule.WithFactor: f must be finite and >= 1")
+	}
 	return func(e *Exponential) { e.factor = f }
 }
 
