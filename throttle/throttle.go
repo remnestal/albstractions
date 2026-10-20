@@ -149,7 +149,7 @@ func (t *Throttle) nextSlot(delay time.Duration) time.Duration {
 // sleep waits for d, returning ctx.Err() if the context is cancelled first.
 func sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
-		return nil
+		return ctx.Err()
 	}
 	timer := time.NewTimer(d)
 	defer timer.Stop()
