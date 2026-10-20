@@ -31,6 +31,18 @@ func memoryShards[K comparable, V any]() func() cache.Cache[K, V] {
 	return func() cache.Cache[K, V] { return cache.NewMemory[K, V]() }
 }
 
+// trackedShards is like memoryShards but also returns the backends it builds.
+// NewSharded calls the constructor once per shard in index order, so the slice
+// index is the shard index.
+func trackedShards[K comparable, V any]() (func() cache.Cache[K, V], *[]*cache.Memory[K, V]) {
+	var backends []*cache.Memory[K, V]
+	return func() cache.Cache[K, V] {
+		m := cache.NewMemory[K, V]()
+		backends = append(backends, m)
+		return m
+	}, &backends
+}
+
 func TestHashShard(t *testing.T) {
 	t.Parallel()
 
@@ -48,6 +60,22 @@ func TestHashShard(t *testing.T) {
 		v, ok := s.Get("k")
 		assert.True(t, ok)
 		assert.Equal(t, 1, v)
+	})
+
+	t.Run("spreads keys across more than one backend", func(t *testing.T) {
+		t.Parallel()
+		newShard, backends := trackedShards[int, int]()
+		s := cache.NewSharded[int, int](8, cache.HashShard[int](), newShard)
+		for i := range 100 {
+			s.Set(i, i, cache.Never)
+		}
+		used := 0
+		for _, b := range *backends {
+			if len(maps.Collect(b.Items())) > 0 {
+				used++
+			}
+		}
+		assert.Greater(t, used, 1)
 	})
 }
 
@@ -70,6 +98,26 @@ func TestModuloShard(t *testing.T) {
 			v, ok := s.Get(i)
 			require.True(t, ok)
 			assert.Equal(t, i*2, v)
+		}
+	})
+
+	t.Run("sends key i to backend i modulo size", func(t *testing.T) {
+		t.Parallel()
+		const size = 8
+		newShard, backends := trackedShards[int, int]()
+		s := cache.NewSharded[int, int](size, cache.ModuloShard[int](), newShard)
+		for i := range 100 {
+			s.Set(i, i, cache.Never)
+		}
+		require.Len(t, *backends, size)
+		for j, b := range *backends {
+			for k := range b.Items() {
+				assert.Equal(t, j, k%size, "key %d is in backend %d", k, j)
+			}
+		}
+		for i := range 100 {
+			_, ok := (*backends)[i%size].Get(i)
+			assert.True(t, ok, "key %d is missing from backend %d", i, i%size)
 		}
 	})
 }
