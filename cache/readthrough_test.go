@@ -96,6 +96,20 @@ func TestReadThrough_GetContext(t *testing.T) {
 		assert.False(t, ok)
 		assert.ErrorIs(t, err, boom)
 	})
+
+	t.Run("stores a loaded value under Default", func(t *testing.T) {
+		t.Parallel()
+		front := &mock.Backend[string, int]{}
+		rt := cache.NewReadThrough[string, int](front, constLoader[string](5, nil))
+		_, ok, err := rt.GetContext(t.Context(), "k")
+		require.NoError(t, err)
+		require.True(t, ok)
+
+		calls := front.Calls()
+		require.Len(t, calls, 2)
+		assert.Equal(t, "Set", calls[1].Op)
+		assert.Equal(t, cache.Default, calls[1].Exp)
+	})
 }
 
 func TestReadThrough_Set(t *testing.T) {
