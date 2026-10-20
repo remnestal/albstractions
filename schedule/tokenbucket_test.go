@@ -1,9 +1,9 @@
 package schedule_test
 
 import (
-	"math"
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"testing/synctest"
 	"time"
