@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"maps"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -164,10 +165,7 @@ func TestSharded_Items(t *testing.T) {
 		for i := range 100 {
 			s.Set(i, i, cache.Never)
 		}
-		got := map[int]int{}
-		for k, v := range s.Items() {
-			got[k] = v
-		}
+		got := maps.Collect(s.Items())
 		assert.Len(t, got, 100)
 	})
 }
@@ -195,10 +193,7 @@ func TestSharded_ItemsContext(t *testing.T) {
 			s.Set(i, i, cache.Never)
 		}
 		seq, errf := s.ItemsContext(context.Background())
-		got := map[int]int{}
-		for k, v := range seq {
-			got[k] = v
-		}
+		got := maps.Collect(seq)
 		require.NoError(t, errf())
 		assert.Len(t, got, 50)
 	})

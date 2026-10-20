@@ -3,6 +3,7 @@ package cache_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -284,10 +285,7 @@ func TestWriteThrough_Items(t *testing.T) {
 		front := cache.NewMemory[string, int]()
 		front.Set("a", 1, cache.Never)
 		wt := cache.NewWriteThrough[string, int](front, okWriter)
-		got := map[string]int{}
-		for k, v := range wt.Items() {
-			got[k] = v
-		}
+		got := maps.Collect(wt.Items())
 		assert.Equal(t, map[string]int{"a": 1}, got)
 	})
 }
@@ -301,10 +299,7 @@ func TestWriteThrough_ItemsContext(t *testing.T) {
 		front.Set("a", 1, cache.Never)
 		wt := cache.NewWriteThrough[string, int](front, okWriter)
 		seq, errf := wt.ItemsContext(context.Background())
-		got := map[string]int{}
-		for k, v := range seq {
-			got[k] = v
-		}
+		got := maps.Collect(seq)
 		require.NoError(t, errf())
 		assert.Equal(t, map[string]int{"a": 1}, got)
 	})

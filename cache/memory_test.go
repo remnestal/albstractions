@@ -2,6 +2,7 @@ package cache_test
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -153,10 +154,7 @@ func TestMemory_Items(t *testing.T) {
 		c := cache.NewMemory[string, int]()
 		c.Set("a", 1, cache.Never)
 		c.Set("b", 2, cache.Never)
-		got := map[string]int{}
-		for k, v := range c.Items() {
-			got[k] = v
-		}
+		got := maps.Collect(c.Items())
 		assert.Equal(t, map[string]int{"a": 1, "b": 2}, got)
 	})
 
@@ -166,10 +164,7 @@ func TestMemory_Items(t *testing.T) {
 		c.Set("live", 1, cache.After(time.Hour))
 		c.Set("dead", 2, cache.After(time.Nanosecond))
 		time.Sleep(time.Millisecond)
-		got := map[string]int{}
-		for k, v := range c.Items() {
-			got[k] = v
-		}
+		got := maps.Collect(c.Items())
 		assert.Equal(t, map[string]int{"live": 1}, got)
 	})
 
@@ -212,10 +207,7 @@ func TestMemory_ItemsContext(t *testing.T) {
 		c.Set("a", 1, cache.Never)
 		c.Set("b", 2, cache.Never)
 		seq, errf := c.ItemsContext(context.Background())
-		got := map[string]int{}
-		for k, v := range seq {
-			got[k] = v
-		}
+		got := maps.Collect(seq)
 		require.NoError(t, errf())
 		assert.Equal(t, map[string]int{"a": 1, "b": 2}, got)
 	})

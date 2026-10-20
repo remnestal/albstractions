@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"maps"
 	"testing"
 	"time"
 
@@ -115,10 +116,7 @@ func TestBackend_Items(t *testing.T) {
 				return func(yield func(string, int) bool) { yield("a", 1) }, func() error { return nil }
 			},
 		}
-		got := map[string]int{}
-		for k, v := range b.Items() {
-			got[k] = v
-		}
+		got := maps.Collect(b.Items())
 		assert.Equal(t, map[string]int{"a": 1}, got)
 	})
 }
