@@ -345,9 +345,7 @@ func TestMemory_Concurrent(t *testing.T) {
 	const ops = 500
 	var wg sync.WaitGroup
 	for g := range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range ops {
 				key := (g*ops + i) % 64
 				switch i % 4 {
@@ -362,7 +360,7 @@ func TestMemory_Concurrent(t *testing.T) {
 					}
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

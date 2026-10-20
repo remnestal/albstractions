@@ -217,13 +217,11 @@ func TestWithSingleFlight(t *testing.T) {
 		const n = 20
 		var wg sync.WaitGroup
 		for range n {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				v, ok := rt.Get("k")
 				assert.True(t, ok)
 				assert.Equal(t, 42, v)
-			}()
+			})
 		}
 		<-entered
 		time.Sleep(20 * time.Millisecond)
@@ -254,12 +252,10 @@ func TestWithSingleFlight(t *testing.T) {
 		var wg sync.WaitGroup
 		errs := make([]error, n)
 		for i := range n {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				_, _, err := rt.GetContext(context.Background(), "k")
 				errs[i] = err
-			}()
+			})
 		}
 		<-entered
 		time.Sleep(20 * time.Millisecond)
@@ -341,13 +337,11 @@ func TestWithSingleFlight(t *testing.T) {
 		var wg sync.WaitGroup
 		errs := make([]error, n)
 		for i := range n {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				defer func() { _ = recover() }() // the leader re-panics; absorb it
 				_, _, err := rt.GetContext(context.Background(), "k")
 				errs[i] = err
-			}()
+			})
 		}
 		<-entered
 		time.Sleep(20 * time.Millisecond)

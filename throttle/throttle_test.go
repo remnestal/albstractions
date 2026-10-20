@@ -249,15 +249,13 @@ func TestThrottle_Do_maxInflight_contextCancelDuringAcquire(t *testing.T) {
 
 	slotHeld := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_ = th.Do(context.Background(), func(_ context.Context) error {
 			close(slotHeld)
 			time.Sleep(200 * time.Millisecond)
 			return nil
 		})
-	}()
+	})
 
 	<-slotHeld // slot is now occupied
 

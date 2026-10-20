@@ -46,11 +46,9 @@ func TestShutdown(t *testing.T) {
 		g := lifecycle.New()
 		var wg sync.WaitGroup
 		for range 10 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				assert.NotPanics(t, g.Shutdown)
-			}()
+			})
 		}
 		wg.Wait()
 		assert.ErrorIs(t, g.Context().Err(), context.Canceled)
@@ -605,18 +603,14 @@ func TestRun(t *testing.T) {
 
 		var setup sync.WaitGroup
 		for range 10 {
-			setup.Add(1)
-			go func() {
-				defer setup.Done()
+			setup.Go(func() {
 				g.Require("worker", func(ctx context.Context) error { <-ctx.Done(); return nil })
-			}()
+			})
 		}
 		for range 5 {
-			setup.Add(1)
-			go func() {
-				defer setup.Done()
+			setup.Go(func() {
 				g.Defer(50*time.Millisecond, func(_ context.Context) {})
-			}()
+			})
 		}
 
 		runErr := make(chan error, 1)
