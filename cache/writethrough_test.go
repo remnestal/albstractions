@@ -43,7 +43,7 @@ func TestWriteThrough_SetContext(t *testing.T) {
 		front := cache.NewMemory[string, int]()
 		wt := cache.NewWriteThrough[string, int](front, writer)
 
-		_, err := wt.SetContext(context.Background(), "k", 5, cache.Never)
+		_, err := wt.SetContext(t.Context(), "k", 5, cache.Never)
 		require.NoError(t, err)
 		assert.Equal(t, 5, backing["k"])
 		v, ok := front.Get("k")
@@ -58,7 +58,7 @@ func TestWriteThrough_SetContext(t *testing.T) {
 		front := cache.NewMemory[string, int]()
 		wt := cache.NewWriteThrough[string, int](front, writer)
 
-		_, err := wt.SetContext(context.Background(), "k", 5, cache.Never)
+		_, err := wt.SetContext(t.Context(), "k", 5, cache.Never)
 		assert.ErrorIs(t, err, boom)
 		_, ok := front.Get("k")
 		assert.False(t, ok)
@@ -191,7 +191,7 @@ func TestWriteThrough_GetContext(t *testing.T) {
 		front := cache.NewMemory[string, int]()
 		front.Set("k", 9, cache.Never)
 		wt := cache.NewWriteThrough[string, int](front, okWriter)
-		v, ok, err := wt.GetContext(context.Background(), "k")
+		v, ok, err := wt.GetContext(t.Context(), "k")
 		require.NoError(t, err)
 		assert.True(t, ok)
 		assert.Equal(t, 9, v)
@@ -209,7 +209,7 @@ func TestWriteThrough_DeleteContext(t *testing.T) {
 		deleter := func(_ context.Context, k string) error { delete(backing, k); return nil }
 		wt := cache.NewWriteThrough[string, int](front, okWriter, cache.WithDeleter[string, int](deleter))
 
-		require.NoError(t, wt.DeleteContext(context.Background(), "k"))
+		require.NoError(t, wt.DeleteContext(t.Context(), "k"))
 		_, inBacking := backing["k"]
 		assert.False(t, inBacking)
 		_, ok := front.Get("k")
@@ -224,7 +224,7 @@ func TestWriteThrough_DeleteContext(t *testing.T) {
 		deleter := func(context.Context, string) error { return boom }
 		wt := cache.NewWriteThrough[string, int](front, okWriter, cache.WithDeleter[string, int](deleter))
 
-		assert.ErrorIs(t, wt.DeleteContext(context.Background(), "k"), boom)
+		assert.ErrorIs(t, wt.DeleteContext(t.Context(), "k"), boom)
 		_, ok := front.Get("k")
 		assert.True(t, ok)
 	})
@@ -235,7 +235,7 @@ func TestWriteThrough_DeleteContext(t *testing.T) {
 		front.Set("k", 1, cache.Never)
 		wt := cache.NewWriteThrough[string, int](front, okWriter)
 
-		require.NoError(t, wt.DeleteContext(context.Background(), "k"))
+		require.NoError(t, wt.DeleteContext(t.Context(), "k"))
 		_, ok := front.Get("k")
 		assert.False(t, ok)
 	})
@@ -298,7 +298,7 @@ func TestWriteThrough_ItemsContext(t *testing.T) {
 		front := cache.NewMemory[string, int]()
 		front.Set("a", 1, cache.Never)
 		wt := cache.NewWriteThrough[string, int](front, okWriter)
-		seq, errf := wt.ItemsContext(context.Background())
+		seq, errf := wt.ItemsContext(t.Context())
 		got := maps.Collect(seq)
 		require.NoError(t, errf())
 		assert.Equal(t, map[string]int{"a": 1}, got)

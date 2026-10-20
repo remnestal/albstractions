@@ -35,7 +35,7 @@ func TestBackend_GetContext(t *testing.T) {
 	t.Run("misses by default", func(t *testing.T) {
 		t.Parallel()
 		b := &mock.Backend[string, int]{}
-		v, ok, err := b.GetContext(context.Background(), "k")
+		v, ok, err := b.GetContext(t.Context(), "k")
 		require.NoError(t, err)
 		assert.False(t, ok)
 		assert.Zero(t, v)
@@ -46,7 +46,7 @@ func TestBackend_GetContext(t *testing.T) {
 		b := &mock.Backend[string, int]{
 			GetFunc: func(context.Context, string) (int, bool, error) { return 42, true, nil },
 		}
-		v, ok, err := b.GetContext(context.Background(), "k")
+		v, ok, err := b.GetContext(t.Context(), "k")
 		require.NoError(t, err)
 		assert.True(t, ok)
 		assert.Equal(t, 42, v)
@@ -59,7 +59,7 @@ func TestBackend_SetContext(t *testing.T) {
 	t.Run("succeeds without storing by default", func(t *testing.T) {
 		t.Parallel()
 		b := &mock.Backend[string, int]{}
-		exp, err := b.SetContext(context.Background(), "k", 1, cache.After(time.Hour))
+		exp, err := b.SetContext(t.Context(), "k", 1, cache.After(time.Hour))
 		require.NoError(t, err)
 		assert.True(t, exp.IsZero())
 	})
@@ -72,7 +72,7 @@ func TestBackend_SetContext(t *testing.T) {
 				return time.Time{}, boom
 			},
 		}
-		_, err := b.SetContext(context.Background(), "k", 1, cache.After(time.Hour))
+		_, err := b.SetContext(t.Context(), "k", 1, cache.After(time.Hour))
 		assert.ErrorIs(t, err, boom)
 	})
 }
@@ -83,7 +83,7 @@ func TestBackend_DeleteContext(t *testing.T) {
 	t.Run("succeeds by default", func(t *testing.T) {
 		t.Parallel()
 		b := &mock.Backend[string, int]{}
-		assert.NoError(t, b.DeleteContext(context.Background(), "k"))
+		assert.NoError(t, b.DeleteContext(t.Context(), "k"))
 	})
 
 	t.Run("delegates to DeleteFunc", func(t *testing.T) {
@@ -92,7 +92,7 @@ func TestBackend_DeleteContext(t *testing.T) {
 		b := &mock.Backend[string, int]{
 			DeleteFunc: func(context.Context, string) error { return boom },
 		}
-		assert.ErrorIs(t, b.DeleteContext(context.Background(), "k"), boom)
+		assert.ErrorIs(t, b.DeleteContext(t.Context(), "k"), boom)
 	})
 }
 
@@ -132,7 +132,7 @@ func TestBackend_ItemsContext(t *testing.T) {
 				return func(func(string, int) bool) {}, func() error { return boom }
 			},
 		}
-		seq, errf := b.ItemsContext(context.Background())
+		seq, errf := b.ItemsContext(t.Context())
 		for range seq {
 		}
 		assert.ErrorIs(t, errf(), boom)
@@ -141,7 +141,7 @@ func TestBackend_ItemsContext(t *testing.T) {
 	t.Run("defaults to no error", func(t *testing.T) {
 		t.Parallel()
 		b := &mock.Backend[string, int]{}
-		_, errf := b.ItemsContext(context.Background())
+		_, errf := b.ItemsContext(t.Context())
 		assert.NoError(t, errf())
 	})
 }

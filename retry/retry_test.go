@@ -79,7 +79,7 @@ func TestDo(t *testing.T) {
 		r := retry.New(cs, retry.MaxAttempts(5))
 
 		var calls atomic.Int64
-		err := r.Do(context.Background(), func(_ context.Context) error {
+		err := r.Do(t.Context(), func(_ context.Context) error {
 			calls.Add(1)
 			return nil
 		})
@@ -94,7 +94,7 @@ func TestDo(t *testing.T) {
 
 		var calls atomic.Int64
 		transient := errors.New("transient")
-		err := r.Do(context.Background(), func(_ context.Context) error {
+		err := r.Do(t.Context(), func(_ context.Context) error {
 			if calls.Add(1) < 4 {
 				return transient
 			}
@@ -110,7 +110,7 @@ func TestDo(t *testing.T) {
 
 		var calls atomic.Int64
 		sentinel := errors.New("nope")
-		err := r.Do(context.Background(), func(_ context.Context) error {
+		err := r.Do(t.Context(), func(_ context.Context) error {
 			calls.Add(1)
 			return sentinel
 		})
@@ -124,7 +124,7 @@ func TestDo(t *testing.T) {
 
 		sentinel := errors.New("nope")
 		start := time.Now()
-		err := r.Do(context.Background(), func(_ context.Context) error { return sentinel })
+		err := r.Do(t.Context(), func(_ context.Context) error { return sentinel })
 		elapsed := time.Since(start)
 
 		assert.ErrorIs(t, err, sentinel)
@@ -142,7 +142,7 @@ func TestDo(t *testing.T) {
 		r := retry.New(constSchedule(0), stop)
 
 		var calls atomic.Int64
-		err := r.Do(context.Background(), func(_ context.Context) error {
+		err := r.Do(t.Context(), func(_ context.Context) error {
 			calls.Add(1)
 			return permanent
 		})
@@ -154,7 +154,7 @@ func TestDo(t *testing.T) {
 		t.Parallel()
 		r := retry.New(constSchedule(10*time.Second), retry.MaxAttempts(100))
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 		defer cancel()
 
 		var calls atomic.Int64
@@ -197,7 +197,7 @@ func TestDo(t *testing.T) {
 		t.Parallel()
 		r := retry.New(constSchedule(0), retry.MaxAttempts(5))
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		err := r.Do(ctx, func(ctx context.Context) error { return ctx.Err() })
@@ -210,7 +210,7 @@ func TestDo(t *testing.T) {
 		r := retry.New(rs, retry.MaxAttempts(2))
 
 		for range 3 {
-			_ = r.Do(context.Background(), func(_ context.Context) error { return errors.New("x") })
+			_ = r.Do(t.Context(), func(_ context.Context) error { return errors.New("x") })
 		}
 		assert.Equal(t, int64(3), rs.resets.Load(), "Reset should be called once per Do")
 	})
@@ -219,7 +219,7 @@ func TestDo(t *testing.T) {
 		t.Parallel()
 		// constSchedule does not implement Resetter; Do must still work.
 		r := retry.New(constSchedule(0), retry.MaxAttempts(2))
-		err := r.Do(context.Background(), func(_ context.Context) error { return errors.New("x") })
+		err := r.Do(t.Context(), func(_ context.Context) error { return errors.New("x") })
 		assert.Error(t, err)
 	})
 
@@ -237,7 +237,7 @@ func TestDo(t *testing.T) {
 
 		var calls atomic.Int64
 		transient := errors.New("transient")
-		err := r.Do(context.Background(), func(_ context.Context) error {
+		err := r.Do(t.Context(), func(_ context.Context) error {
 			if calls.Add(1) < 3 {
 				return transient
 			}
@@ -272,7 +272,7 @@ func TestDo(t *testing.T) {
 		r := retry.New(constSchedule(time.Second), retry.MaxAttempts(2), hook)
 
 		sentinel := errors.New("x")
-		_ = r.Do(context.Background(), func(_ context.Context) error { return sentinel })
+		_ = r.Do(t.Context(), func(_ context.Context) error { return sentinel })
 
 		mu.Lock()
 		defer mu.Unlock()
@@ -287,7 +287,7 @@ func TestDo(t *testing.T) {
 		r := retry.New(cs, retry.MaxAttempts(4))
 
 		sentinel := errors.New("x")
-		_ = r.Do(context.Background(), func(_ context.Context) error { return sentinel })
+		_ = r.Do(t.Context(), func(_ context.Context) error { return sentinel })
 
 		// 4 attempts → 3 inter-attempt sleeps → 3 Next() calls.
 		assert.Equal(t, int64(3), cs.calls.Load())
@@ -304,7 +304,7 @@ func TestDo(t *testing.T) {
 		for range n {
 			go func() {
 				defer wg.Done()
-				_ = r.Do(context.Background(), func(_ context.Context) error {
+				_ = r.Do(t.Context(), func(_ context.Context) error {
 					total.Add(1)
 					return errors.New("x")
 				})
@@ -318,7 +318,7 @@ func TestDo(t *testing.T) {
 		t.Parallel()
 		// StopFunc that never halts — only ctx can stop the loop.
 		r := retry.New(constSchedule(5*time.Millisecond), retry.StopFunc(alwaysContinue))
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 		defer cancel()
 
 		err := r.Do(ctx, func(_ context.Context) error { return errors.New("x") })

@@ -793,7 +793,7 @@ func TestWithContext(t *testing.T) {
 
 	t.Run("parent cancellation triggers shutdown", func(t *testing.T) {
 		t.Parallel()
-		parent, cancel := context.WithCancel(context.Background())
+		parent, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		g := lifecycle.New(lifecycle.WithContext(parent))
@@ -860,7 +860,7 @@ func TestWithContext(t *testing.T) {
 
 	t.Run("cause is parent context error", func(t *testing.T) {
 		t.Parallel()
-		parent, cancel := context.WithCancel(context.Background())
+		parent, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		g := lifecycle.New(lifecycle.WithContext(parent))

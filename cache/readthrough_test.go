@@ -72,7 +72,7 @@ func TestReadThrough_GetContext(t *testing.T) {
 		front.Set("k", 1, cache.Never)
 		rt := cache.NewReadThrough[string, int](front, loader)
 
-		v, ok, err := rt.GetContext(context.Background(), "k")
+		v, ok, err := rt.GetContext(t.Context(), "k")
 		require.NoError(t, err)
 		assert.True(t, ok)
 		assert.Equal(t, 1, v)
@@ -82,7 +82,7 @@ func TestReadThrough_GetContext(t *testing.T) {
 	t.Run("recognised miss returns false with no error", func(t *testing.T) {
 		t.Parallel()
 		rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), constLoader[string](0, cache.ErrCacheMiss))
-		_, ok, err := rt.GetContext(context.Background(), "k")
+		_, ok, err := rt.GetContext(t.Context(), "k")
 		assert.False(t, ok)
 		assert.NoError(t, err)
 	})
@@ -91,7 +91,7 @@ func TestReadThrough_GetContext(t *testing.T) {
 		t.Parallel()
 		boom := errors.New("boom")
 		rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), constLoader[string](0, boom))
-		_, ok, err := rt.GetContext(context.Background(), "k")
+		_, ok, err := rt.GetContext(t.Context(), "k")
 		assert.False(t, ok)
 		assert.ErrorIs(t, err, boom)
 	})
@@ -146,7 +146,7 @@ func TestReadThrough_ItemsContext(t *testing.T) {
 		front := cache.NewMemory[string, int]()
 		front.Set("a", 1, cache.Never)
 		rt := cache.NewReadThrough[string, int](front, constLoader[string](0, nil))
-		seq, errf := rt.ItemsContext(context.Background())
+		seq, errf := rt.ItemsContext(t.Context())
 		got := maps.Collect(seq)
 		require.NoError(t, errf())
 		assert.Equal(t, map[string]int{"a": 1}, got)
@@ -160,7 +160,7 @@ func TestReadThrough_SetContext(t *testing.T) {
 		t.Parallel()
 		front := cache.NewMemory[string, int]()
 		rt := cache.NewReadThrough[string, int](front, constLoader[string](0, nil))
-		_, err := rt.SetContext(context.Background(), "k", 4, cache.Never)
+		_, err := rt.SetContext(t.Context(), "k", 4, cache.Never)
 		require.NoError(t, err)
 		v, ok := front.Get("k")
 		assert.True(t, ok)
@@ -176,7 +176,7 @@ func TestReadThrough_DeleteContext(t *testing.T) {
 		front := cache.NewMemory[string, int]()
 		front.Set("k", 1, cache.Never)
 		rt := cache.NewReadThrough[string, int](front, constLoader[string](0, nil))
-		require.NoError(t, rt.DeleteContext(context.Background(), "k"))
+		require.NoError(t, rt.DeleteContext(t.Context(), "k"))
 		_, ok := front.Get("k")
 		assert.False(t, ok)
 	})
@@ -253,7 +253,7 @@ func TestWithSingleFlight(t *testing.T) {
 		errs := make([]error, n)
 		for i := range n {
 			wg.Go(func() {
-				_, _, err := rt.GetContext(context.Background(), "k")
+				_, _, err := rt.GetContext(t.Context(), "k")
 				errs[i] = err
 			})
 		}
@@ -339,7 +339,7 @@ func TestWithSingleFlight(t *testing.T) {
 		for i := range n {
 			wg.Go(func() {
 				defer func() { _ = recover() }() // the leader re-panics; absorb it
-				_, _, err := rt.GetContext(context.Background(), "k")
+				_, _, err := rt.GetContext(t.Context(), "k")
 				errs[i] = err
 			})
 		}
@@ -477,7 +477,7 @@ func TestWithMissError(t *testing.T) {
 			constLoader[string](0, errNotFound),
 			cache.WithMissError(errNotFound),
 		)
-		_, ok, err := rt.GetContext(context.Background(), "k")
+		_, ok, err := rt.GetContext(t.Context(), "k")
 		assert.False(t, ok)
 		assert.NoError(t, err)
 	})
@@ -491,7 +491,7 @@ func TestLoaderFromCache(t *testing.T) {
 		src := cache.NewMemory[string, int]()
 		src.Set("k", 8, cache.Never)
 		load := cache.LoaderFromCache[string, int](src)
-		v, err := load(context.Background(), "k")
+		v, err := load(t.Context(), "k")
 		require.NoError(t, err)
 		assert.Equal(t, 8, v)
 	})
@@ -499,7 +499,7 @@ func TestLoaderFromCache(t *testing.T) {
 	t.Run("returns ErrCacheMiss on a miss", func(t *testing.T) {
 		t.Parallel()
 		load := cache.LoaderFromCache[string, int](cache.NewMemory[string, int]())
-		_, err := load(context.Background(), "absent")
+		_, err := load(t.Context(), "absent")
 		assert.ErrorIs(t, err, cache.ErrCacheMiss)
 	})
 

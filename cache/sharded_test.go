@@ -192,7 +192,7 @@ func TestSharded_ItemsContext(t *testing.T) {
 		for i := range 50 {
 			s.Set(i, i, cache.Never)
 		}
-		seq, errf := s.ItemsContext(context.Background())
+		seq, errf := s.ItemsContext(t.Context())
 		got := maps.Collect(seq)
 		require.NoError(t, errf())
 		assert.Len(t, got, 50)
@@ -208,7 +208,7 @@ func TestSharded_ItemsContext(t *testing.T) {
 				},
 			}
 		})
-		seq, errf := s.ItemsContext(context.Background())
+		seq, errf := s.ItemsContext(t.Context())
 		for range seq {
 		}
 		assert.ErrorIs(t, errf(), boom)
@@ -243,9 +243,9 @@ func TestSharded_GetContext(t *testing.T) {
 	t.Run("delegates to the routed backend", func(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[string, int](4, cache.HashShard[string](), memoryShards[string, int]())
-		_, err := s.SetContext(context.Background(), "k", 9, cache.Never)
+		_, err := s.SetContext(t.Context(), "k", 9, cache.Never)
 		require.NoError(t, err)
-		v, ok, err := s.GetContext(context.Background(), "k")
+		v, ok, err := s.GetContext(t.Context(), "k")
 		require.NoError(t, err)
 		assert.True(t, ok)
 		assert.Equal(t, 9, v)
@@ -258,7 +258,7 @@ func TestSharded_SetContext(t *testing.T) {
 	t.Run("delegates to the routed backend", func(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[string, int](4, cache.HashShard[string](), memoryShards[string, int]())
-		exp, err := s.SetContext(context.Background(), "k", 1, cache.After(time.Hour))
+		exp, err := s.SetContext(t.Context(), "k", 1, cache.After(time.Hour))
 		require.NoError(t, err)
 		assert.WithinDuration(t, time.Now().Add(time.Hour), exp, time.Second)
 	})
@@ -271,7 +271,7 @@ func TestSharded_DeleteContext(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[string, int](4, cache.HashShard[string](), memoryShards[string, int]())
 		s.Set("k", 1, cache.Never)
-		require.NoError(t, s.DeleteContext(context.Background(), "k"))
+		require.NoError(t, s.DeleteContext(t.Context(), "k"))
 		_, ok := s.Get("k")
 		assert.False(t, ok)
 	})
