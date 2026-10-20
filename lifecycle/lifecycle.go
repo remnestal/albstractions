@@ -104,8 +104,11 @@ func WithSignals(sigs ...os.Signal) Option {
 	}
 }
 
-// WithErrorHandler registers a callback invoked each time a goroutine returns
-// a non-context error.
+// WithErrorHandler registers a callback invoked each time a goroutine's error
+// is collected.
+//
+// A context error returned once shutdown has begun is a clean stop, not a
+// failure, and is not passed to the callback.
 //
 // The callback is called from the goroutine that produced the error and may
 // be invoked concurrently if multiple goroutines fail simultaneously — it
@@ -142,10 +145,14 @@ func New(opts ...Option) *Group {
 // Require registers a required goroutine to run within the group.
 //
 // The name identifies the goroutine in [Group.ShutdownCause] when it is the
-// trigger. If fn returns a non-nil, non-context error, shutdown is triggered
-// and the error is included in [Group.Run]'s return value. If fn returns nil
-// while the group's context is still active (premature exit), shutdown is
-// triggered and [Group.ShutdownCause] records the name.
+// trigger. If fn returns a non-nil error, shutdown is triggered and the error
+// is included in [Group.Run]'s return value. If fn returns nil while the
+// group's context is still active (premature exit), shutdown is triggered and
+// [Group.ShutdownCause] records the name.
+//
+// A context error (context.Canceled, context.DeadlineExceeded) counts as a
+// clean stop only once shutdown has begun. Returned while the group is still
+// running, for example from fn's own timeout, it is a failure like any other.
 //
 // Require may be called before or after Run. If called while shutdown is in
 // progress, the call is a no-op.
@@ -266,15 +273,17 @@ func (g *Group) ShutdownCause() error {
 //
 // Shutdown begins when an OS signal is received (if configured with
 // [WithSignals]), [Group.Shutdown] is called, the parent context is cancelled
-// (if configured with [WithContext]), or a goroutine exits prematurely or
-// returns a non-context error. Run then drains all registered HTTP servers
-// concurrently, executes teardown callbacks in registration order within
-// their individual deadlines, waits for all goroutines to exit, and returns.
+// (if configured with [WithContext]), or a goroutine fails or exits
+// prematurely. Run then drains all registered HTTP servers concurrently,
+// executes teardown callbacks in registration order within their individual
+// deadlines, waits for goroutines to exit, up to the graceful budget, and
+// returns.
 //
 // Run returns the combined errors from goroutines and from HTTP servers that
-// failed to drain, via errors.Join. Goroutines that return context errors
-// (context.Canceled, context.DeadlineExceeded) do not contribute, but a drain
-// cut short does, with an error wrapping context.DeadlineExceeded; so
+// failed to drain, via errors.Join. Context errors (context.Canceled,
+// context.DeadlineExceeded) that goroutines return after shutdown has begun do
+// not contribute; one returned while the group is still running does, as does
+// a drain cut short, with an error wrapping context.DeadlineExceeded. So
 // errors.Is(err, context.DeadlineExceeded) does not mean a clean stop.
 //
 // Run is safe to call multiple times: the second and subsequent calls block
@@ -385,7 +394,7 @@ func (g *Group) run() error {
 func (g *Group) requireNamed(kind, name string, fn func(ctx context.Context) error) {
 	g.register(func() {
 		err := fn(g.ctx)
-		if err != nil && !isContextErr(err) {
+		if err != nil && (!g.shuttingDown() || !isContextErr(err)) {
 			g.collectError(err, fmt.Errorf("%s %q: %w", kind, name, err))
 			return
 		}
@@ -446,4 +455,10 @@ func (g *Group) shutdown(cause error) {
 // isContextErr reports whether err wraps a context cancellation or deadline error.
 func isContextErr(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// shuttingDown reports whether shutdown has begun, counting a cancelled
+// [WithContext] parent whose watcher has not yet called shutdown.
+func (g *Group) shuttingDown() bool {
+	return g.ctx.Err() != nil || (g.cfg.parentCtx != nil && g.cfg.parentCtx.Err() != nil)
 }
