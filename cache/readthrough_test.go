@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/remnestal/albstractions/cache"
+	"github.com/remnestal/albstractions/cache/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -521,5 +522,17 @@ func TestLoaderFromCache(t *testing.T) {
 
 		_, miss := l1.Get("absent")
 		assert.False(t, miss)
+	})
+
+	t.Run("propagates a backend error rather than reporting a miss", func(t *testing.T) {
+		t.Parallel()
+		boom := errors.New("backend down")
+		src := &mock.Backend[string, int]{
+			GetFunc: func(context.Context, string) (int, bool, error) { return 0, false, boom },
+		}
+		load := cache.LoaderFromCache[string, int](src)
+		_, err := load(t.Context(), "k")
+		require.ErrorIs(t, err, boom)
+		assert.NotErrorIs(t, err, cache.ErrCacheMiss)
 	})
 }
