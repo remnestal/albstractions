@@ -110,6 +110,22 @@ func TestReadThrough_GetContext(t *testing.T) {
 		assert.Equal(t, "Set", calls[1].Op)
 		assert.Equal(t, cache.Default, calls[1].Exp)
 	})
+
+	t.Run("a front error propagates without loading", func(t *testing.T) {
+		t.Parallel()
+		boom := errors.New("front down")
+		front := &mock.Backend[string, int]{
+			GetFunc: func(context.Context, string) (int, bool, error) { return 0, false, boom },
+		}
+		var calls atomic.Int64
+		loader := func(context.Context, string) (int, error) { calls.Add(1); return 5, nil }
+		rt := cache.NewReadThrough[string, int](front, loader)
+
+		_, ok, err := rt.GetContext(t.Context(), "k")
+		require.ErrorIs(t, err, boom)
+		assert.False(t, ok)
+		assert.Zero(t, calls.Load())
+	})
 }
 
 func TestReadThrough_Set(t *testing.T) {
