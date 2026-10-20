@@ -136,10 +136,12 @@ func (r *Retry) fire(info AttemptInfo) {
 	}
 }
 
-// sleep waits for d, returning ctx.Err() if the context is cancelled first.
+// sleep waits for d, returning ctx.Err() if the context is done first. A
+// non-positive d returns immediately but still reports ctx.Err(), so a zero
+// delay cannot hide cancellation.
 func sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
-		return nil
+		return ctx.Err()
 	}
 	timer := time.NewTimer(d)
 	defer timer.Stop()
