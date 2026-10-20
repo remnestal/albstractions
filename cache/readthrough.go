@@ -29,6 +29,13 @@ type readThroughConfig struct {
 // call to the [Loader], sharing its result among the waiters.
 //
 // It prevents a thundering herd of loads when a popular key is missing.
+//
+// Each caller's context bounds only its own wait: a waiter whose context ends
+// returns [context.Cause] of it, and leaving does not stop the shared load.
+//
+// The shared load runs under the context of the caller that started it. If
+// that context ends and the load fails, waiters whose contexts are still live
+// load again under their own, so the loader may run more than once per burst.
 func WithSingleFlight() ReadThroughOption {
 	return func(c *readThroughConfig) { c.singleFlight = true }
 }
@@ -188,7 +195,7 @@ func (r *ReadThrough[K, V]) loadAndStore(ctx context.Context, key K) (V, error) 
 		return v, nil
 	}
 	if r.flight != nil {
-		return r.flight.Do(key, load)
+		return r.flight.Do(ctx, key, load)
 	}
 	return load()
 }
@@ -208,9 +215,12 @@ func (r *ReadThrough[K, V]) isMiss(err error) bool {
 
 // call is a single in-flight load shared by [flightGroup].
 type call[V any] struct {
-	wg  sync.WaitGroup
-	val V
-	err error
+	done chan struct{}
+	val  V
+	err  error
+	// abandoned reports that the load failed because the leader's own context
+	// ended, so the result says nothing about the key and waiters should retry.
+	abandoned bool
 }
 
 // flightGroup deduplicates concurrent loads of the same key.
@@ -222,24 +232,47 @@ type flightGroup[K comparable, V any] struct {
 // Do runs fn for key, or waits for and returns the result of an in-flight call
 // for the same key.
 //
+// A waiter stops waiting when its own ctx is done. If the leader's load fails
+// because the leader's ctx ended, live waiters take over the load instead of
+// inheriting that error.
+//
 // If fn panics, the in-flight entry is removed and waiters receive an error
 // instead of blocking forever; the panic is then re-raised on the calling
 // goroutine.
-func (g *flightGroup[K, V]) Do(key K, fn func() (V, error)) (V, error) {
-	g.mu.Lock()
-	if c, ok := g.m[key]; ok {
+func (g *flightGroup[K, V]) Do(ctx context.Context, key K, fn func() (V, error)) (V, error) {
+	for {
+		g.mu.Lock()
+		if c, ok := g.m[key]; ok {
+			g.mu.Unlock()
+			select {
+			case <-c.done:
+			case <-ctx.Done():
+				var zero V
+				return zero, context.Cause(ctx)
+			}
+			if c.abandoned {
+				// The leader's own ctx ended, so its error says nothing about
+				// the key: load again, unless this caller's ctx ended too.
+				if ctx.Err() != nil {
+					var zero V
+					return zero, context.Cause(ctx)
+				}
+				continue
+			}
+			return c.val, c.err
+		}
+		c := &call[V]{done: make(chan struct{})}
+		g.m[key] = c
 		g.mu.Unlock()
-		c.wg.Wait()
-		return c.val, c.err
+		return g.lead(ctx, key, c, fn)
 	}
-	c := &call[V]{}
-	c.wg.Add(1)
-	g.m[key] = c
-	g.mu.Unlock()
+}
 
+// lead runs fn as the leader of c and publishes its result to waiters.
+func (g *flightGroup[K, V]) lead(ctx context.Context, key K, c *call[V], fn func() (V, error)) (V, error) {
 	// Clean up and release waiters even if fn panics: a panicking loader must not
 	// wedge the key, or waiters and every future caller would block forever.
-	// Waiters receive the error; the panic is re-raised on this goroutine.
+	// Waiters receive the error; the panic is then re-raised on this goroutine.
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -248,12 +281,13 @@ func (g *flightGroup[K, V]) Do(key K, fn func() (V, error)) (V, error) {
 		g.mu.Lock()
 		delete(g.m, key)
 		g.mu.Unlock()
-		c.wg.Done()
+		close(c.done)
 		if r != nil {
 			panic(r)
 		}
 	}()
 
 	c.val, c.err = fn()
+	c.abandoned = c.err != nil && ctx.Err() != nil
 	return c.val, c.err
 }

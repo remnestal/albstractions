@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/cache"
@@ -369,6 +370,110 @@ func TestWithSingleFlight(t *testing.T) {
 			}
 		}
 		assert.Equal(t, n-1, got)
+	})
+
+	t.Run("a waiter is not failed by the leader's cancellation", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			var calls atomic.Int64
+			loader := func(ctx context.Context, _ string) (int, error) {
+				calls.Add(1)
+				select {
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				case <-time.After(time.Second):
+					return 42, nil
+				}
+			}
+			rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+
+			leaderCtx, cancelLeader := context.WithCancel(t.Context())
+			var leaderErr error
+			var wg sync.WaitGroup
+			wg.Go(func() { _, _, leaderErr = rt.GetContext(leaderCtx, "k") })
+			synctest.Wait() // the leader is inside the loader
+
+			var (
+				v   int
+				ok  bool
+				err error
+			)
+			wg.Go(func() { v, ok, err = rt.GetContext(t.Context(), "k") })
+			synctest.Wait() // the waiter has joined the flight
+
+			cancelLeader()
+			wg.Wait()
+
+			assert.ErrorIs(t, leaderErr, context.Canceled, "a cancelled leader keeps its own error")
+			require.NoError(t, err)
+			assert.True(t, ok)
+			assert.Equal(t, 42, v)
+			assert.Equal(t, int64(2), calls.Load(), "the waiter should take over the load")
+		})
+	})
+
+	t.Run("a waiter stops waiting when its own context is done", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			loader := func(context.Context, string) (int, error) {
+				time.Sleep(time.Hour)
+				return 42, nil
+			}
+			rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+
+			var wg sync.WaitGroup
+			defer wg.Wait()
+			wg.Go(func() { _, _, _ = rt.GetContext(t.Context(), "k") })
+			synctest.Wait() // the leader is inside the loader
+
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			start := time.Now()
+			_, ok, err := rt.GetContext(ctx, "k")
+
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.False(t, ok)
+			assert.Equal(t, time.Second, time.Since(start))
+		})
+	})
+
+	t.Run("waiters of a cancelled leader reload once", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			var calls atomic.Int64
+			loader := func(ctx context.Context, _ string) (int, error) {
+				calls.Add(1)
+				select {
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				case <-time.After(time.Second):
+					return 42, nil
+				}
+			}
+			rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+
+			leaderCtx, cancelLeader := context.WithCancel(t.Context())
+			var wg sync.WaitGroup
+			wg.Go(func() { _, _, _ = rt.GetContext(leaderCtx, "k") })
+			synctest.Wait()
+
+			const waiters = 50
+			var hits atomic.Int64
+			for range waiters {
+				wg.Go(func() {
+					if v, ok, err := rt.GetContext(t.Context(), "k"); err == nil && ok && v == 42 {
+						hits.Add(1)
+					}
+				})
+			}
+			synctest.Wait() // every waiter has joined the flight
+
+			cancelLeader()
+			wg.Wait()
+
+			assert.Equal(t, int64(waiters), hits.Load())
+			assert.Equal(t, int64(2), calls.Load(), "one waiter reloads and the rest join it")
+		})
 	})
 }
 
