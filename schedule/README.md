@@ -72,7 +72,7 @@ s := schedule.NewSine(100*time.Millisecond, 1*time.Second, time.Minute,
 
 ### TokenBucket
 
-Adapts any rate limiter that hands out reservations to the `Schedule` interface. Each call reserves capacity and returns the wait until it is available. Note that capacity is consumed on every call regardless of whether the caller actually waits.
+Adapts any rate limiter that hands out reservations to the `Schedule` interface. Each call reserves capacity and returns the wait until it is available. Note that capacity is consumed on every call regardless of whether the caller actually waits. A limiter that can never grant capacity, such as one with burst 0, makes `Next` return `math.MaxInt64`, so a caller without a deadline blocks instead of running unlimited.
 
 The limiter and its reservation are declared as interfaces, so the module carries no dependency on `golang.org/x/time`. A `*rate.Limiter` satisfies them structurally, so one can be passed directly:
 
