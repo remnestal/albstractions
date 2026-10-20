@@ -15,16 +15,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// closerCache is a Memory that records how many times it is closed, used to
-// verify that Sharded.Close cascades to its backends.
+// closerCache is a Memory that records how many times it is closed and then
+// returns err, used to verify that Sharded.Close cascades to its backends.
 type closerCache struct {
 	*cache.Memory[string, int]
 	closes *atomic.Int64
+	err    error
 }
 
 func (c closerCache) Close() error {
 	c.closes.Add(1)
-	return c.Memory.Close()
+	if err := c.Memory.Close(); err != nil {
+		return err
+	}
+	return c.err
 }
 
 func memoryShards[K comparable, V any]() func() cache.Cache[K, V] {
@@ -300,6 +304,25 @@ func TestSharded_Close(t *testing.T) {
 		})
 		require.NoError(t, s.Close())
 		assert.Equal(t, int64(3), closes.Load())
+	})
+
+	t.Run("joins every backend error and still closes them all", func(t *testing.T) {
+		t.Parallel()
+		errA, errB := errors.New("close a"), errors.New("close b")
+		errs := []error{errA, nil, errB}
+		var closes atomic.Int64
+		next := 0
+		s := cache.NewSharded[string, int](len(errs), cache.HashShard[string](), func() cache.Cache[string, int] {
+			c := closerCache{Memory: cache.NewMemory[string, int](), closes: &closes, err: errs[next]}
+			next++
+			return c
+		})
+
+		err := s.Close()
+		require.Error(t, err)
+		assert.ErrorIs(t, err, errA)
+		assert.ErrorIs(t, err, errB)
+		assert.Equal(t, int64(len(errs)), closes.Load())
 	})
 
 	t.Run("skips backends that are not io.Closer", func(t *testing.T) {
