@@ -440,6 +440,39 @@ func TestGenerateServerCert(t *testing.T) {
 		cert := parseCert(t, leaf.CertPEM)
 		assert.Equal(t, 0, want.Cmp(cert.SerialNumber))
 	})
+
+	t.Run("rejects SANs that would make the certificate unparseable or empty", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name     string
+			dnsNames []string
+			ips      []net.IP
+			uri      string
+			want     string
+		}{
+			{name: "nil IP from a failed net.ParseIP", ips: []net.IP{net.ParseIP("10.0.0.300")}, want: "IP address SAN at index 0"},
+			{name: "empty IP", ips: []net.IP{{}}, want: "IP address SAN at index 0"},
+			{name: "empty DNS name", dnsNames: []string{""}, want: "DNS name SAN at index 0 is empty"},
+			{name: "percent-encoded non-ASCII URI host", dnsNames: []string{"localhost"}, uri: "spiffe://a%C3%A4b/x", want: "parse created leaf certificate"},
+			{name: "URI host with trailing dot", dnsNames: []string{"localhost"}, uri: "spiffe://example.org./x", want: "parse created leaf certificate"},
+			{name: "URI host with empty label", dnsNames: []string{"localhost"}, uri: "spiffe://a..b/x", want: "parse created leaf certificate"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				var opts []pki.Option
+				if tt.uri != "" {
+					opts = append(opts, pki.WithURIs(tt.uri))
+				}
+				_, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", tt.dnsNames, tt.ips, time.Hour, opts...)
+				require.Error(t, err, "created a certificate that cannot be used")
+				assert.Contains(t, err.Error(), tt.want)
+			})
+		}
+	})
 }
 
 func TestGenerateClientCert(t *testing.T) {

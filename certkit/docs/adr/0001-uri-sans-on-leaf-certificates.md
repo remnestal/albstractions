@@ -54,6 +54,13 @@ downstream authorization allowlists on, that is the worst possible failure mode.
   scheme that `url.Parse` would lowercase, a redundantly encoded octet. The
   caller gets an error naming the form that *would* have been issued.
 
+A fourth class is caught after creation rather than by `resolveURIs`: a host
+that `crypto/x509` serialises but refuses to parse back, such as a trailing
+dot, an empty label, or a percent-encoded non-ASCII byte. The leaf generator
+parses every certificate it creates and returns an error instead of a
+certificate that would fail at load time, so the guarantee still holds:
+issued verbatim, or not at all.
+
 The round-trip check is the strict one, and deliberately so — it is what makes
 "the SPIFFE ID in the certificate is byte-for-byte the one you passed" a
 property of the API rather than a hope.
