@@ -1,7 +1,11 @@
 package cache
 
 import (
+	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -55,6 +59,78 @@ func TestResolveExpiry(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestMemoryLookup(t *testing.T) {
+	t.Parallel()
+
+	getters := []struct {
+		name string
+		get  func(m *Memory[string, int]) bool
+	}{
+		{"Get", func(m *Memory[string, int]) bool { _, ok := m.Get("k"); return ok }},
+		{"GetContext", func(m *Memory[string, int]) bool {
+			_, ok, _ := m.GetContext(context.Background(), "k")
+			return ok
+		}},
+	}
+	for _, g := range getters {
+		t.Run("removes an expired entry on read via "+g.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				m := NewMemory[string, int]()
+				m.Set("k", 1, After(time.Second))
+				time.Sleep(2 * time.Second)
+
+				assert.False(t, g.get(m))
+				m.mu.RLock()
+				defer m.mu.RUnlock()
+				assert.Empty(t, m.m, "an expired entry must be deleted when read")
+			})
+		})
+	}
+
+	t.Run("keeps a live entry", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			m := NewMemory[string, int]()
+			m.Set("k", 1, After(time.Hour))
+
+			v, ok := m.Get("k")
+			assert.True(t, ok)
+			assert.Equal(t, 1, v)
+			m.mu.RLock()
+			defer m.mu.RUnlock()
+			assert.Len(t, m.m, 1)
+		})
+	})
+
+	t.Run("does not remove an entry re-set concurrently", func(t *testing.T) {
+		t.Parallel()
+		// Needs real interleaving, so no synctest. Readers that saw the expired
+		// entry must not delete the fresh one written after it.
+		m := NewMemory[string, int]()
+		var stop atomic.Bool
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Go(func() {
+				for !stop.Load() {
+					m.Get("k")
+				}
+			})
+		}
+		lost := 0
+		for i := range 1000 {
+			m.Set("k", i, At(time.Now().Add(-time.Hour)))
+			m.Set("k", i, After(time.Hour))
+			if _, ok := m.Get("k"); !ok {
+				lost++
+			}
+		}
+		stop.Store(true)
+		wg.Wait()
+		assert.Zero(t, lost, "fresh entries removed by readers of an earlier, expired one")
+	})
 }
 
 func TestMemoryCleanup(t *testing.T) {

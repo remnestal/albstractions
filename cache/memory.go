@@ -16,9 +16,11 @@ type entry[V any] struct {
 
 // Memory is an in-memory [Cache] backed by a single map guarded by an RWMutex.
 //
-// Expired entries are removed lazily on read and, when configured, by a
+// An expired entry is removed when its key is read and, when configured, by a
 // background janitor ([WithCleanupInterval]) and a periodic map rebuild
-// ([WithRebuildInterval]). Call [Memory.Close] to stop those goroutines.
+// ([WithRebuildInterval]). Without a janitor, an expired key that is never read
+// again stays in memory until it is overwritten or deleted. Call [Memory.Close]
+// to stop the background goroutines.
 //
 // Values are stored by assignment: when V is a reference type (slice, map,
 // pointer) the cache and its callers share the underlying data, so a retrieved
@@ -146,17 +148,26 @@ func (m *Memory[K, V]) Close() error {
 	return nil
 }
 
-// lookup reads key under a read lock, reporting expired entries as absent
-// without removing them.
+// lookup reads key under a read lock. An expired entry is reported as absent
+// and then deleted under the write lock.
 func (m *Memory[K, V]) lookup(key K) (V, bool) {
+	now := time.Now()
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	e, ok := m.m[key]
-	if !ok || expired(e.expiresAt, time.Now()) {
-		var zero V
-		return zero, false
+	m.mu.RUnlock()
+	if ok && !expired(e.expiresAt, now) {
+		return e.value, true
 	}
-	return e.value, true
+	if ok {
+		// Re-check under the write lock so a concurrent fresh Set is not removed.
+		m.mu.Lock()
+		if cur, ok := m.m[key]; ok && expired(cur.expiresAt, now) {
+			delete(m.m, key)
+		}
+		m.mu.Unlock()
+	}
+	var zero V
+	return zero, false
 }
 
 // set stores val under key, resolving exp against the configured bounds and the
