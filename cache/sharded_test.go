@@ -261,6 +261,32 @@ func TestSharded_ItemsContext(t *testing.T) {
 		}
 		assert.ErrorIs(t, errf(), boom)
 	})
+
+	t.Run("stops at the first backend error", func(t *testing.T) {
+		t.Parallel()
+		boom := errors.New("scan failed")
+		healthy := cache.NewMemory[int, int]()
+		healthy.Set(1, 1, cache.Never)
+		backends := []cache.Cache[int, int]{
+			&mock.Backend[int, int]{
+				ItemsContextFunc: func(context.Context) (iter.Seq2[int, int], func() error) {
+					return func(func(int, int) bool) {}, func() error { return boom }
+				},
+			},
+			healthy,
+		}
+		next := 0
+		s := cache.NewSharded[int, int](len(backends), cache.ModuloShard[int](), func() cache.Cache[int, int] {
+			b := backends[next]
+			next++
+			return b
+		})
+
+		seq, errf := s.ItemsContext(t.Context())
+		got := maps.Collect(seq)
+		assert.Empty(t, got, "no backend after the failing one may be visited")
+		assert.ErrorIs(t, errf(), boom)
+	})
 }
 
 func TestSharded_Close(t *testing.T) {
