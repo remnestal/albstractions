@@ -16,15 +16,40 @@ jobs:
       modules: ${{ steps.set.outputs.modules }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # A pull request checks out its merge into main, whose first parent
+          # is main, so diffing against HEAD^1 sees exactly the PR's changes.
+          fetch-depth: 2
       - id: set
+        # Explicit, for pipefail: a failing git diff must fail the job, not
+        # yield an empty matrix that skips every check.
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
-          modules=$(find . -name go.mod -not -path './.git/*' \
-            | xargs -n1 dirname | sed 's|^\./||' | sort \
-            | jq -R -s -c 'split("\n") | map(select(. != ""))')
-          echo "modules=$modules" >> "$GITHUB_OUTPUT"
+          all=$(find . -name go.mod -not -path './.git/*' \
+            | xargs -n1 dirname | sed 's|^\./||' | sort)
+          modules=$all
+          # Pushes to main and the weekly scan check every module. A pull
+          # request checks only the modules it touches, unless it touches a
+          # file outside every module, such as this workflow or the lint
+          # config, which can affect them all. Root Markdown affects none.
+          if [ "$EVENT" = pull_request ]; then
+            modules=$(git diff --name-only --no-renames HEAD^1 HEAD | while read -r f; do
+              [[ $f != */* && $f == *.md ]] && continue
+              owner='*'
+              for m in $all; do
+                if [[ $f == "$m"/* ]]; then owner=$m; fi
+              done
+              echo "$owner"
+            done | sort -u)
+            if echo "$modules" | grep -qx '\*'; then modules=$all; fi
+          fi
+          echo "modules=$(echo "$modules" | jq -R -s -c 'split("\n") | map(select(. != ""))')" >> "$GITHUB_OUTPUT"
 
   ci:
     needs: discover
+    if: needs.discover.outputs.modules != '[]'
     name: Test & Lint (${{ matrix.module }})
     runs-on: ubuntu-latest
     strategy:
