@@ -171,6 +171,28 @@ func TestDo(t *testing.T) {
 		assert.Less(t, elapsed, 500*time.Millisecond)
 	})
 
+	t.Run("context cancel with non-positive delay returns ctx.Err", func(t *testing.T) {
+		t.Parallel()
+		for _, delay := range []time.Duration{0, -time.Second} {
+			t.Run(delay.String(), func(t *testing.T) {
+				t.Parallel()
+				r := retry.New(constSchedule(delay), retry.MaxAttempts(1000))
+
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+
+				calls := 0
+				err := r.Do(ctx, func(_ context.Context) error {
+					calls++
+					return errors.New("transient")
+				})
+
+				assert.ErrorIs(t, err, context.Canceled)
+				assert.Equal(t, 1, calls, "fn should run once before the non-positive sleep observes cancellation")
+			})
+		}
+	})
+
 	t.Run("context cancel during fn surfaces as fn error", func(t *testing.T) {
 		t.Parallel()
 		r := retry.New(constSchedule(0), retry.MaxAttempts(5))
