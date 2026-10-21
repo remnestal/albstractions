@@ -60,7 +60,8 @@ find . -name go.mod | xargs -I{} dirname {} | xargs -I{} sh -c 'cd {} && golangc
 ## Adding a New Module
  
 1. Create a new directory at the repo root: `mkdir <module>`
-2. Initialise the module: `cd <module> && go mod init github.com/remnestal/albstractions/<module>`
+2. Initialise the module: `cd <module> && go mod init github.com/remnestal/albstractions/<module>`,
+   then set the Go version floor with `go mod edit -go=1.N.0`.
 3. Follow the package layout conventions below.
 4. Copy the root `LICENCE` into `<module>/LICENCE`. A module's published zip
    contains only its own subdirectory, so a licence at the repo root is invisible
@@ -181,6 +182,20 @@ Follow semver strictly:
 - **Major** (`vX.0.0`): breaking API change. For v2+, the module path must include the major version suffix (e.g. `github.com/remnestal/albstractions/certkit/v2`).
  
 Do **not** retag an existing version. If something was wrong, release a new patch.
+
+### Go version floor
+
+Every module declares the oldest Go release the Go team still supports, as
+`go 1.N.0` (currently `go 1.26.0`), unless a feature it ships needs a newer one.
+Code and tests must not use APIs newer than the declared version.
+
+To bump the floor, run `go mod edit -go=1.N.0` and `go mod tidy` in every module
+in one change. Never add a `toolchain` line: it overrides the `go` line, and CI
+would stop testing the floor.
+
+A newer local toolchain does not catch standard-library APIs above the floor.
+CI tests each module on its declared version; locally, run
+`GOTOOLCHAIN=go1.N.0 go test ./...`.
 
 ## Design Principles
  
