@@ -27,16 +27,18 @@ func (r fakeReservation) Delay() time.Duration { return r.delay }
 
 // fakeLimiter mimics a token bucket: the first burst reservations are granted
 // with no delay, and each one after that waits a further interval. A limiter
-// with neither burst nor interval refuses every reservation.
+// with neither burst nor interval refuses every reservation, reporting
+// refusedDelay as the refused reservation's Delay.
 type fakeLimiter struct {
-	burst    int
-	interval time.Duration
-	issued   int
+	burst        int
+	interval     time.Duration
+	refusedDelay time.Duration
+	issued       int
 }
 
 func (l *fakeLimiter) Reserve() fakeReservation {
 	if l.burst == 0 && l.interval == 0 {
-		return fakeReservation{}
+		return fakeReservation{delay: l.refusedDelay}
 	}
 	l.issued++
 	if l.issued <= l.burst {
@@ -61,6 +63,21 @@ func TestTokenBucket(t *testing.T) {
 		s := schedule.NewTokenBucket(&fakeLimiter{burst: 5, interval: time.Second})
 		for range 5 {
 			assert.Equal(t, time.Duration(0), s.Next())
+		}
+	})
+
+	t.Run("refused reservation ignores the reservation's Delay", func(t *testing.T) {
+		t.Parallel()
+
+		// Reservation leaves Delay undefined once OK is false: rate.Limiter
+		// reports rate.InfDuration, other limiters may report anything. Next
+		// must answer a refusal the same way whatever Delay says, so the
+		// refused delays below differ and the results must not.
+		const infDuration = time.Duration(1<<63 - 1) // rate.InfDuration
+		want := schedule.NewTokenBucket(&fakeLimiter{}).Next()
+		for _, d := range []time.Duration{time.Second, infDuration} {
+			s := schedule.NewTokenBucket(&fakeLimiter{refusedDelay: d})
+			assert.Equal(t, want, s.Next(), "refused Delay %v", d)
 		}
 	})
 
