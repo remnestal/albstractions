@@ -183,6 +183,7 @@ func TestRequire(t *testing.T) {
 			assert.NotPanics(t, func() {
 				g.Require("late", func(_ context.Context) error { ran.Store(true); return nil })
 			})
+			synctest.Wait() // a wrongly started goroutine has now run
 			assert.False(t, ran.Load())
 		})
 	})
