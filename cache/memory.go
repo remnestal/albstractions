@@ -26,6 +26,8 @@ type entry[V any] struct {
 // pointer) the cache and its callers share the underlying data, so a retrieved
 // value must not be mutated without external synchronisation.
 //
+// Create a Memory with [NewMemory]; the zero value is not usable.
+//
 // Memory is safe for concurrent use.
 type Memory[K comparable, V any] struct {
 	cfg       memoryConfig
