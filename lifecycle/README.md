@@ -92,7 +92,7 @@ To fold the group into an existing context tree, pass `WithContext`. Cancelling 
 | `WithGracefulTimeout(d)` | Total budget for the whole teardown: server drain, callbacks, and goroutine exit combined. It holds only if `Defer` callbacks return once their context is done, since a running callback cannot be interrupted. Default 30s |
 | `WithSignals(sigs...)` | OS signals that trigger shutdown. None by default |
 | `WithContext(ctx)` | Parent context whose cancellation triggers shutdown and whose `context.Cause` becomes the cause. Its values reach every goroutine |
-| `WithErrorHandler(fn)` | Called for each goroutine error as it is collected. May be called concurrently |
+| `WithErrorHandler(fn)` | Called with each goroutine error that `Run` will return, before that error triggers shutdown, so a slow handler delays shutdown. A goroutine stopping with a context error once shutdown has begun is a clean stop and is not passed to it. May be called concurrently |
 
 ## Group API
 
