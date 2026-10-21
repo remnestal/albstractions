@@ -82,7 +82,9 @@ The `AttemptInfo` it receives carries:
 | `Attempt` | 1-based attempt number |
 | `Elapsed` | Time since `Do` was called |
 | `Err` | The attempt's error, or nil on success |
-| `Next` | Delay before the next attempt, or 0 when no retry follows |
+| `Next` | Delay `Do` is about to wait before the next attempt, or 0 on success or halt |
+
+The hook fires before the delay is waited out, so a positive `Next` is not a promise: if `ctx` is done before the delay ends, `Do` returns `ctx.Err()` and no retry follows. A zero or negative `Next` does not by itself mean `Do` is returning, since a schedule may return such a delay.
 
 ## Cancellation
 
