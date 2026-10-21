@@ -10,6 +10,10 @@ import (
 //
 // Requests are spaced by the [Throttle]'s schedule; use [WithMaxInflight] to
 // control how many may be in flight concurrently (default: 1).
+//
+// A request is in flight until the inner transport returns, which is when the
+// response headers arrive. Reading the response body does not hold a slot, so
+// the cap bounds concurrent requests, not concurrent body downloads.
 type RoundTripper struct {
 	next http.RoundTripper
 	t    *Throttle
