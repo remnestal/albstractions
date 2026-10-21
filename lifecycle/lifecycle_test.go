@@ -277,27 +277,30 @@ func TestServe(t *testing.T) {
 
 	t.Run("starts server and shuts it down gracefully", func(t *testing.T) {
 		t.Parallel()
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err)
-		addr := l.Addr().String()
-		require.NoError(t, l.Close())
-
+		addr := make(chan string, 1)
 		server := &http.Server{
-			Addr: addr,
+			// The server binds its own ephemeral port and reports it once
+			// listening, so no other listener can take the port in between.
+			Addr: "127.0.0.1:0",
+			BaseContext: func(l net.Listener) context.Context {
+				addr <- l.Addr().String()
+				return context.Background()
+			},
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}),
 		}
+		t.Cleanup(func() { _ = server.Close() })
 		g := lifecycle.New()
 		g.Serve("api", server)
 
 		runErr := make(chan error, 1)
 		go func() { runErr <- g.Run() }()
 
-		require.Eventually(t, func() bool {
-			resp, err := http.Get("http://" + addr + "/")
-			return err == nil && resp.StatusCode == http.StatusOK
-		}, time.Second, 10*time.Millisecond)
+		resp, err := http.Get("http://" + <-addr + "/")
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		g.Shutdown()
 		assert.NoError(t, <-runErr)
@@ -426,33 +429,36 @@ func TestServe(t *testing.T) {
 
 	t.Run("servers drain before Defer callbacks regardless of registration order", func(t *testing.T) {
 		t.Parallel()
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err)
-		addr := l.Addr().String()
-		require.NoError(t, l.Close())
-
 		var order []string
 		var mu sync.Mutex
 		record := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
 
-		// Defer registered BEFORE Serve — must still run after server drains.
-		g := lifecycle.New()
-		g.Defer(time.Second, func(_ context.Context) { record("callback") })
-		g.Serve("api", &http.Server{
-			Addr: addr,
+		addr := make(chan string, 1)
+		server := &http.Server{
+			Addr: "127.0.0.1:0",
+			BaseContext: func(l net.Listener) context.Context {
+				addr <- l.Addr().String()
+				return context.Background()
+			},
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				record("request")
 				w.WriteHeader(http.StatusOK)
 			}),
-		})
+		}
+		t.Cleanup(func() { _ = server.Close() })
+
+		// Defer registered BEFORE Serve — must still run after server drains.
+		g := lifecycle.New()
+		g.Defer(time.Second, func(_ context.Context) { record("callback") })
+		g.Serve("api", server)
 
 		runErr := make(chan error, 1)
 		go func() { runErr <- g.Run() }()
 
-		require.Eventually(t, func() bool {
-			resp, err := http.Get("http://" + addr + "/")
-			return err == nil && resp.StatusCode == http.StatusOK
-		}, time.Second, 10*time.Millisecond)
+		resp, err := http.Get("http://" + <-addr + "/")
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		g.Shutdown()
 		require.NoError(t, <-runErr)
