@@ -38,8 +38,13 @@ type AttemptInfo struct {
 	Elapsed time.Duration
 	// Err is the error returned by this attempt, or nil on success.
 	Err error
-	// Next is the upcoming sleep before the next attempt. It is zero when
-	// Do is about to return (success or stop condition reached).
+	// Next is the delay Do is about to wait before the next attempt, or zero
+	// on success or when the stop condition halts. A zero or negative Next does
+	// not mean Do is returning, since a Schedule may return such a delay.
+	//
+	// The hook fires before that wait. A positive Next does not promise a
+	// retry: if ctx is done before the wait ends, Do returns ctx.Err() and
+	// no further attempt runs.
 	Next time.Duration
 }
 

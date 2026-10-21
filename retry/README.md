@@ -14,7 +14,7 @@ A `Retry` is constructed from a [`Schedule`](https://pkg.go.dev/github.com/remne
 
 Stop conditions are composable. Assemble a budget with `Any` (whichever fires first) or `All` (only when all fire) from the building blocks `MaxAttempts`, `MaxElapsed`, and `OnError`.
 
-Both dependencies are declared as local interfaces, so `retry` imports nothing. Any type with a `Next() time.Duration` method fits, including every implementation in the `schedule` module.
+The schedule is a local interface and the stop condition a plain function type, so `retry` has no non-standard-library imports. Any type with a `Next() time.Duration` method fits, including every implementation in the `schedule` module.
 
 ## Usage
 
@@ -64,10 +64,12 @@ then `Do` resets it at the start of every invocation, so backoff never carries o
 | Builder | Halts when |
 |---------|------------|
 | `MaxAttempts(n)` | the n-th failed attempt completes |
-| `MaxElapsed(d)` | cumulative time since `Do` started reaches `d` |
+| `MaxElapsed(d)` | cumulative time since `Do` started reaches `d`, checked after each failed attempt |
 | `OnError(pred)` | `pred(err)` returns `true` for the latest error |
 | `Any(stops...)` | any of `stops` halts (logical OR) |
 | `All(stops...)` | all of `stops` halt (logical AND) |
+
+`MaxElapsed` is a budget, not a deadline. It is checked only after a failed attempt, and the delay that follows is never shortened to fit what remains, so `Do` can run past `d` by up to one delay plus one attempt. For a hard deadline, bound the `ctx` passed to `Do` with `context.WithTimeout`.
 
 ## Observation hook
 
@@ -80,7 +82,9 @@ The `AttemptInfo` it receives carries:
 | `Attempt` | 1-based attempt number |
 | `Elapsed` | Time since `Do` was called |
 | `Err` | The attempt's error, or nil on success |
-| `Next` | Delay before the next attempt, or 0 when no retry follows |
+| `Next` | Delay `Do` is about to wait before the next attempt, or 0 on success or halt |
+
+The hook fires before the delay is waited out, so a positive `Next` is not a promise: if `ctx` is done before the delay ends, `Do` returns `ctx.Err()` and no retry follows. A zero or negative `Next` does not by itself mean `Do` is returning, since a schedule may return such a delay.
 
 ## Cancellation
 

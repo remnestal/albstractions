@@ -30,6 +30,11 @@ func MaxAttempts(n int) StopFunc {
 // MaxElapsed stops once the cumulative elapsed time since [Retry.Do] started
 // reaches d.
 //
+// MaxElapsed is not a deadline. Like every StopFunc it is checked only after
+// a failed attempt, and the delay that follows is never shortened to fit the
+// remaining budget, so Do can run past d by up to one delay plus one attempt.
+// For a hard deadline, bound the ctx passed to Do with [context.WithTimeout].
+//
 // Panics if d <= 0.
 func MaxElapsed(d time.Duration) StopFunc {
 	if d <= 0 {
