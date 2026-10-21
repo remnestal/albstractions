@@ -586,6 +586,22 @@ func TestRun(t *testing.T) {
 		})
 	})
 
+	t.Run("does not wait past the graceful budget for a goroutine that ignores cancellation", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			const graceful = 50 * time.Millisecond
+			g := lifecycle.New(lifecycle.WithGracefulTimeout(graceful))
+			release := make(chan struct{})
+			defer close(release) // let the straggler exit so the bubble can end
+			g.Require("straggler", func(context.Context) error { <-release; return nil })
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+
+			start := time.Now()
+			require.NoError(t, g.Run())
+			assert.Equal(t, 10*time.Millisecond+graceful, time.Since(start), "shutdown at 10ms, then the graceful budget")
+		})
+	})
+
 	t.Run("configured signal triggers shutdown", func(t *testing.T) {
 		t.Parallel()
 		g := lifecycle.New(lifecycle.WithSignals(syscall.SIGUSR1))
