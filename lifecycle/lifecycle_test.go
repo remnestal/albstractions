@@ -528,6 +528,37 @@ func TestRun(t *testing.T) {
 		assert.Equal(t, int32(1), teardownCount.Load(), "teardown must run exactly once")
 	})
 
+	t.Run("a panicking Defer callback does not block other callers", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Defer(time.Second, func(context.Context) { panic("teardown failed") })
+			g.Shutdown()
+
+			recovered := make(chan any, 1)
+			go func() {
+				defer func() { recovered <- recover() }()
+				_ = g.Run()
+			}()
+			require.Equal(t, "teardown failed", <-recovered, "the panic reaches the first caller")
+
+			second := make(chan error, 1)
+			go func() { second <- g.Run() }()
+			synctest.Wait()
+			select {
+			case err := <-second:
+				assert.NoError(t, err)
+			default:
+				t.Fatal("a later Run call is blocked")
+			}
+			select {
+			case <-g.Done():
+			default:
+				t.Fatal("Done was not closed")
+			}
+		})
+	})
+
 	t.Run("concurrent registration and shutdown without data races", func(t *testing.T) {
 		t.Parallel()
 		g := lifecycle.New(lifecycle.WithGracefulTimeout(100 * time.Millisecond))

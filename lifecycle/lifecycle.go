@@ -300,8 +300,10 @@ func (g *Group) ShutdownCause() error {
 // until the first call completes, then return the same error.
 func (g *Group) Run() error {
 	g.runOnce.Do(func() {
+		// Deferred so that a panicking teardown callback, recovered by
+		// this caller, cannot leave the other callers and Done waiting.
+		defer close(g.done)
 		g.runErr = g.run()
-		close(g.done)
 	})
 	<-g.done
 	return g.runErr
