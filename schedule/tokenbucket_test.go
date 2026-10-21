@@ -1,6 +1,7 @@
 package schedule_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -62,11 +63,15 @@ func TestTokenBucket(t *testing.T) {
 		assert.Greater(t, s.Next(), time.Duration(0))
 	})
 
-	t.Run("refused reservation returns zero", func(t *testing.T) {
+	t.Run("refused reservation never grants a slot", func(t *testing.T) {
 		t.Parallel()
 
-		// A limiter that can never issue capacity must not block the caller.
+		// A limiter that can never issue capacity, such as a
+		// golang.org/x/time/rate limiter with burst 0, must not turn into
+		// "no limit at all".
 		s := schedule.NewTokenBucket(&fakeLimiter{})
-		assert.Equal(t, time.Duration(0), s.Next())
+		for range 3 {
+			assert.Equal(t, time.Duration(math.MaxInt64), s.Next())
+		}
 	})
 }

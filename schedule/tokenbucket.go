@@ -1,6 +1,9 @@
 package schedule
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // Reservation is a claim on capacity held by a rate limiter.
 //
@@ -33,6 +36,9 @@ type Limiter[R Reservation] interface {
 // Note: reservations are consumed on every Next call regardless of whether the
 // caller actually waits. Rapid successive calls will accumulate growing delays
 // as the bucket drains.
+//
+// A limiter that refuses reservations fails closed: [TokenBucket.Next] reports
+// an infinite delay rather than letting callers run unthrottled.
 type TokenBucket[R Reservation] struct {
 	limiter Limiter[R]
 }
@@ -43,11 +49,19 @@ func NewTokenBucket[R Reservation](limiter Limiter[R]) *TokenBucket[R] {
 }
 
 // Next reserves capacity and returns the delay until it is available.
+//
+// If the limiter refuses the reservation (for example a
+// golang.org/x/time/rate limiter with burst 0), Next returns math.MaxInt64,
+// the same as rate.InfDuration, so callers wait until their context ends
+// rather than running unthrottled.
 func (t *TokenBucket[R]) Next() time.Duration {
 	r := t.limiter.Reserve()
 	if !r.OK() {
-		// burst is 0 or rate is 0 — return zero so callers are not blocked forever.
-		return 0
+		// The limiter will never grant this reservation. Report an infinite
+		// delay, as rate.InfDuration does, rather than letting the caller run
+		// unthrottled. A constant is used because Reservation does not define
+		// Delay for a refused reservation.
+		return math.MaxInt64
 	}
 	return r.Delay()
 }
