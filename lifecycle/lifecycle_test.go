@@ -142,6 +142,31 @@ func TestRequire(t *testing.T) {
 		assert.NoError(t, g.Run())
 	})
 
+	t.Run("no-op when Shutdown precedes Run", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			early := make(chan error, 1)
+			g.Require("early", func(ctx context.Context) error {
+				early <- ctx.Err()
+				return nil
+			})
+			g.Shutdown()
+			var lateRan atomic.Bool
+			g.Require("late", func(context.Context) error { lateRan.Store(true); return nil })
+
+			require.NoError(t, g.Run())
+			synctest.Wait() // a wrongly started goroutine has now run
+			assert.False(t, lateRan.Load(), "goroutine registered after Shutdown ran")
+			select {
+			case err := <-early:
+				assert.ErrorIs(t, err, context.Canceled, "registered before Shutdown, so started with a cancelled context")
+			default:
+				t.Fatal("goroutine registered before Shutdown did not run")
+			}
+		})
+	})
+
 	t.Run("no-op after shutdown completes", func(t *testing.T) {
 		t.Parallel()
 		g := lifecycle.New()
@@ -195,6 +220,21 @@ func TestDefer(t *testing.T) {
 			g.Defer(time.Second, func(_ context.Context) { called.Store(true) })
 		})
 		assert.False(t, called.Load())
+	})
+
+	t.Run("no-op when Shutdown precedes Run", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			var early, late atomic.Bool
+			g.Defer(time.Second, func(context.Context) { early.Store(true) })
+			g.Shutdown()
+			g.Defer(time.Second, func(context.Context) { late.Store(true) })
+
+			require.NoError(t, g.Run())
+			assert.True(t, early.Load(), "callback registered before Shutdown did not run")
+			assert.False(t, late.Load(), "callback registered after Shutdown ran")
+		})
 	})
 
 	t.Run("panics on zero timeout", func(t *testing.T) {

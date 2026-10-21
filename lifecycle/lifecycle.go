@@ -451,10 +451,14 @@ func (g *Group) collectError(rawErr, cause error) {
 
 // shutdown records cause and cancels the group's context. Only the first call
 // has any effect; subsequent calls are no-ops.
+//
+// It also closes registration, so that Require, Serve and Defer are no-ops
+// from here on, even when shutdown is requested before Run.
 func (g *Group) shutdown(cause error) {
 	g.shutdownOnce.Do(func() {
 		g.mu.Lock()
 		g.cause = cause
+		g.stopped = true
 		g.mu.Unlock()
 		g.cancel()
 	})
