@@ -55,6 +55,29 @@ func TestExponential(t *testing.T) {
 
 		require.Panics(t, func() { schedule.NewExponential(time.Second, 100*time.Millisecond) })
 	})
+
+	t.Run("saturates at a maxDelay of math.MaxInt64", func(t *testing.T) {
+		t.Parallel()
+
+		const maxDelay = time.Duration(math.MaxInt64)
+		s := schedule.NewExponential(time.Hour, maxDelay)
+		var d time.Duration
+		for i := range 40 { // 1h doubles past MaxInt64 after ~22 steps
+			d = s.Next()
+			assert.GreaterOrEqual(t, d, time.Duration(0), "step %d", i)
+		}
+		assert.Equal(t, maxDelay, d)
+	})
+
+	t.Run("never exceeds a maxDelay that float64 cannot represent", func(t *testing.T) {
+		t.Parallel()
+
+		const maxDelay = time.Duration(1<<62 + 513)
+		s := schedule.NewExponential(1<<61, maxDelay)
+		for i := range 4 {
+			assert.LessOrEqual(t, s.Next(), maxDelay, "step %d", i)
+		}
+	})
 }
 
 func TestWithFactor(t *testing.T) {

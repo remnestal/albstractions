@@ -1,6 +1,7 @@
 package schedule_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -68,6 +69,36 @@ func TestSine(t *testing.T) {
 			return t0.Add(period / 2)
 		}
 		s := schedule.NewSine(lo, hi, period, schedule.WithClock(clock))
+		assert.Equal(t, hi, s.Next())
+	})
+
+	// halfPeriodClock reports t0 on its first call and half a minute later on
+	// every call after, so a one-minute Sine is sampled at its peak.
+	halfPeriodClock := func() func() time.Time {
+		t0 := time.Unix(0, 0)
+		calls := 0
+		return func() time.Time {
+			calls++
+			if calls == 1 {
+				return t0
+			}
+			return t0.Add(time.Minute / 2)
+		}
+	}
+
+	t.Run("returns hi at half period for a range of math.MaxInt64", func(t *testing.T) {
+		t.Parallel()
+
+		const hi = time.Duration(math.MaxInt64)
+		s := schedule.NewSine(0, hi, time.Minute, schedule.WithClock(halfPeriodClock()))
+		assert.Equal(t, hi, s.Next())
+	})
+
+	t.Run("returns hi at half period when lo > 0 and hi is math.MaxInt64", func(t *testing.T) {
+		t.Parallel()
+
+		const hi = time.Duration(math.MaxInt64)
+		s := schedule.NewSine(100, hi, time.Minute, schedule.WithClock(halfPeriodClock()))
 		assert.Equal(t, hi, s.Next())
 	})
 }
