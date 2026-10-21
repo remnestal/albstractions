@@ -290,8 +290,12 @@ func TestServe(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}),
 		}
+		shutDown := make(chan struct{})
+		server.RegisterOnShutdown(func() { close(shutDown) })
 		t.Cleanup(func() { _ = server.Close() })
-		g := lifecycle.New()
+		// A short budget, so a server that is never shut down holds Run for
+		// one second instead of the default 30.
+		g := lifecycle.New(lifecycle.WithGracefulTimeout(time.Second))
 		g.Serve("api", server)
 
 		runErr := make(chan error, 1)
@@ -304,6 +308,13 @@ func TestServe(t *testing.T) {
 
 		g.Shutdown()
 		assert.NoError(t, <-runErr)
+		// Shutdown runs its hooks on their own goroutines, hence the wait,
+		// which only elapses when the server was never shut down.
+		select {
+		case <-shutDown:
+		case <-time.After(time.Second):
+			t.Fatal("server was not shut down")
+		}
 	})
 
 	t.Run("server bind failure triggers shutdown with error", func(t *testing.T) {
