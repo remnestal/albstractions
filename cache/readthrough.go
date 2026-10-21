@@ -213,6 +213,10 @@ func (r *ReadThrough[K, V]) isMiss(err error) bool {
 	return false
 }
 
+// errGoexit is the error waiters receive when the leader's loader calls
+// [runtime.Goexit], so the load produced no result to share.
+var errGoexit = errors.New("cache: read-through loader called runtime.Goexit")
+
 // call is a single in-flight load shared by [flightGroup].
 type call[V any] struct {
 	done chan struct{}
@@ -238,7 +242,8 @@ type flightGroup[K comparable, V any] struct {
 //
 // If fn panics, the in-flight entry is removed and waiters receive an error
 // instead of blocking forever; the panic is then re-raised on the calling
-// goroutine.
+// goroutine. If fn calls [runtime.Goexit], waiters likewise receive an error
+// rather than a zero-value hit.
 func (g *flightGroup[K, V]) Do(ctx context.Context, key K, fn func() (V, error)) (V, error) {
 	for {
 		g.mu.Lock()
@@ -273,10 +278,17 @@ func (g *flightGroup[K, V]) lead(ctx context.Context, key K, c *call[V], fn func
 	// Clean up and release waiters even if fn panics: a panicking loader must not
 	// wedge the key, or waiters and every future caller would block forever.
 	// Waiters receive the error; the panic is then re-raised on this goroutine.
+	normalReturn := false
 	defer func() {
 		r := recover()
-		if r != nil {
+		switch {
+		case r != nil:
 			c.err = fmt.Errorf("cache: read-through loader panicked: %v", r)
+		case !normalReturn:
+			// recover returns nil while runtime.Goexit unwinds (panic(nil) has
+			// recovered as a non-nil *runtime.PanicNilError since Go 1.21), so
+			// fn neither returned nor panicked: it called Goexit.
+			c.err = errGoexit
 		}
 		g.mu.Lock()
 		delete(g.m, key)
@@ -288,6 +300,7 @@ func (g *flightGroup[K, V]) lead(ctx context.Context, key K, c *call[V], fn func
 	}()
 
 	c.val, c.err = fn()
+	normalReturn = true
 	c.abandoned = c.err != nil && ctx.Err() != nil
 	return c.val, c.err
 }
