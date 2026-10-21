@@ -95,8 +95,13 @@ func New(s Schedule, opts ...Option) *Throttle {
 
 // Do waits for an in-flight slot, then for its dispatch time, then runs fn.
 //
-// Consecutive Do calls on the same Throttle start at least s.Next() apart,
-// even when callers queued behind a slow fn; the first call is not delayed.
+// Each call is due s.Next() after the previous call was due, or at once if that
+// time has passed, and does not start before it, even when callers queued
+// behind a slow fn; the first call is not delayed. Due times follow one
+// another rather than the moment each call actually started, so the cadence
+// does not drift: a call that starts late, behind a slow timer or on a loaded
+// machine, shortens the gap to the next start by as much.
+//
 // When the schedule is a [Waiter], it decides instead when each caller may
 // proceed, and may delay or refuse even the first call.
 //

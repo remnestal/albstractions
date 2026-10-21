@@ -10,7 +10,7 @@ go get github.com/remnestal/albstractions/throttle
 
 ## Overview
 
-A `Throttle` wraps a [`Schedule`](https://pkg.go.dev/github.com/remnestal/albstractions/schedule) and ensures calls are spaced by at least the duration it returns. The first call is never delayed, unless the schedule decides per caller (see below). By default invocations run serially, one at a time; use `WithMaxInflight` to allow more concurrency.
+A `Throttle` wraps a [`Schedule`](https://pkg.go.dev/github.com/remnestal/albstractions/schedule) and starts calls on a cadence set by the durations it returns. Each call is due one duration after the previous call was due, so the cadence does not drift: a call that starts late shortens the gap to the next one rather than pushing the rest back. The first call is never delayed, unless the schedule decides per caller (see below). By default invocations run serially, one at a time; use `WithMaxInflight` to allow more concurrency.
 
 Pacing and concurrency are separate knobs. The schedule decides how often a call may start, irrespective of whether earlier calls have completed; `WithMaxInflight` decides how many may be in flight at once, counting callers still waiting for their dispatch time.
 
@@ -28,7 +28,7 @@ s := schedule.NewConstant(200 * time.Millisecond)
 t := throttle.New(s, throttle.WithMaxInflight(5))
 
 err := t.Do(ctx, func(ctx context.Context) error {
-    // started at most once every 200ms, with at most 5 running concurrently
+    // started on a 200ms cadence, with at most 5 running concurrently
     return doWork(ctx)
 })
 ```
