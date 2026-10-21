@@ -131,8 +131,9 @@ func TestRoundTripper_concurrentCallersSerialised(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				resp, err := client.Get(srv.URL)
-				require.NoError(t, err)
-				require.NoError(t, resp.Body.Close())
+				if assert.NoError(t, err) {
+					assert.NoError(t, resp.Body.Close())
+				}
 			}()
 		}
 		wg.Wait()
@@ -167,8 +168,9 @@ func TestRoundTripper_withMaxInflight(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				resp, err := client.Get(srv.URL)
-				require.NoError(t, err)
-				require.NoError(t, resp.Body.Close())
+				if assert.NoError(t, err) {
+					assert.NoError(t, resp.Body.Close())
+				}
 			}()
 		}
 		wg.Wait()
