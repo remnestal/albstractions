@@ -126,13 +126,35 @@ func TestGenerateCA(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("WithSerial rejects serial exceeding 20 octets", func(t *testing.T) {
+	t.Run("WithSerial limits the serial to 20 octets when DER-encoded", func(t *testing.T) {
 		t.Parallel()
 
-		// 2^161 is 21 octets.
-		tooBig := new(big.Int).Lsh(big.NewInt(1), 161)
-		_, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour, pki.WithSerial(tooBig))
-		assert.Error(t, err)
+		// DER prefixes a zero octet to a value whose top bit is set, so the
+		// largest 20-octet serial is 2^159-1.
+		pow2 := func(n uint) *big.Int { return new(big.Int).Lsh(big.NewInt(1), n) }
+		tests := []struct {
+			name    string
+			serial  *big.Int
+			wantErr bool
+		}{
+			{name: "accepts 2^159-1, 20 octets", serial: new(big.Int).Sub(pow2(159), big.NewInt(1))},
+			{name: "rejects 2^159, 21 octets with the sign octet", serial: pow2(159), wantErr: true},
+			{name: "rejects 2^161, 21 octets", serial: pow2(161), wantErr: true},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				bundle, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour, pki.WithSerial(tt.serial))
+				if tt.wantErr {
+					assert.ErrorContains(t, err, "20 octets")
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, 0, tt.serial.Cmp(parseCert(t, bundle.CertPEM).SerialNumber))
+			})
+		}
 	})
 
 	t.Run("supports all key algorithms", func(t *testing.T) {

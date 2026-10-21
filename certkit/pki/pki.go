@@ -132,9 +132,11 @@ func WithMaxPathLen(n int) Option {
 
 // WithSerial sets a fixed serial number for the generated certificate.
 //
-// serial must be a positive integer whose absolute value fits within 20
-// octets (RFC 5280 §4.1.2.2). If not set, a cryptographically random 128-bit
-// serial is used.
+// serial must be a positive integer of at most 20 octets when DER-encoded
+// (RFC 5280 §4.1.2.2), so at most 159 bits: DER prefixes a zero octet to any
+// value whose top bit is set, which makes 2^159 a 21-octet INTEGER.
+//
+// If not set, a cryptographically random 128-bit serial is used.
 func WithSerial(serial *big.Int) Option {
 	return func(c *certConfig) {
 		c.serial = serial
@@ -402,8 +404,10 @@ func resolveSerial(cfg *certConfig) (*big.Int, error) {
 	if cfg.serial.Sign() <= 0 {
 		return nil, fmt.Errorf("serial must be a positive integer")
 	}
-	if len(cfg.serial.Bytes()) > 20 {
-		return nil, fmt.Errorf("serial exceeds maximum length of 20 octets (RFC 5280)")
+	// Bytes drops DER's sign octet, so measure in bits: a 160-bit value encodes
+	// to 21 octets.
+	if cfg.serial.BitLen() > 159 {
+		return nil, fmt.Errorf("serial exceeds maximum length of 20 octets when DER-encoded (RFC 5280)")
 	}
 	return cfg.serial, nil
 }
