@@ -59,3 +59,13 @@ func TestUniform(t *testing.T) {
 		})
 	})
 }
+
+func TestWithSource(t *testing.T) {
+	t.Parallel()
+
+	t.Run("panics on a nil source", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Panics(t, func() { schedule.WithSource(nil) })
+	})
+}

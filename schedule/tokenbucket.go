@@ -38,7 +38,14 @@ type TokenBucket[R Reservation] struct {
 }
 
 // NewTokenBucket returns a [Schedule] backed by the given limiter.
+//
+// Panics if limiter is nil. A typed nil pointer, such as a nil *rate.Limiter,
+// is a non-nil interface and is not detected; it panics on the first call to
+// [TokenBucket.Next] instead.
 func NewTokenBucket[R Reservation](limiter Limiter[R]) *TokenBucket[R] {
+	if limiter == nil {
+		panic("schedule.NewTokenBucket: limiter must not be nil")
+	}
 	return &TokenBucket[R]{limiter: limiter}
 }
 

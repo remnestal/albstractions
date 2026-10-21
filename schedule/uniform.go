@@ -20,7 +20,13 @@ type UniformOption func(*Uniform)
 // WithSource sets the random source used to generate delays.
 //
 // Useful for deterministic tests. If not set, a random seed is used.
+//
+// Panics if src is nil. A typed nil pointer, such as a nil *rand.PCG, is a
+// non-nil interface and is not detected.
 func WithSource(src rand.Source) UniformOption {
+	if src == nil {
+		panic("schedule.WithSource: src must not be nil")
+	}
 	return func(u *Uniform) { u.rng = rand.New(src) }
 }
 

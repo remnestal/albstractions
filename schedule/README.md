@@ -99,4 +99,4 @@ s := schedule.NewTokenBucket(rate.NewLimiter(rate.Every(time.Second), 10))
 | `WithSource(src)` | `Uniform` | Random source, for deterministic tests. Default a seeded PCG |
 | `WithClock(fn)` | `Sine` | Clock used to derive phase. Default `time.Now` |
 
-Every constructor panics on an invalid range, such as a negative delay or a `hi` below `lo`, so misconfiguration surfaces at startup rather than as a silently wrong cadence.
+Every constructor panics on an invalid range, such as a negative delay or a `hi` below `lo`, so misconfiguration surfaces at startup rather than as a silently wrong cadence. `WithSource`, `WithClock` and `NewTokenBucket` panic on a nil argument, though a typed nil pointer, such as a nil `*rate.Limiter`, is a non-nil interface and is not caught.

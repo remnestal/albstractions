@@ -30,7 +30,12 @@ type SineOption func(*Sine)
 // WithClock overrides the clock function used to measure elapsed time.
 //
 // Useful for deterministic tests.
+//
+// Panics if fn is nil.
 func WithClock(fn func() time.Time) SineOption {
+	if fn == nil {
+		panic("schedule.WithClock: fn must not be nil")
+	}
 	return func(s *Sine) { s.clockFn = fn }
 }
 
