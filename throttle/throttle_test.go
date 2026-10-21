@@ -88,6 +88,13 @@ func (p *peakTracker) exit() {
 	p.mu.Unlock()
 }
 
+// inside reports how many goroutines are inside fn now.
+func (p *peakTracker) inside() int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.current
+}
+
 func TestThrottle_Do_spacing(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -198,6 +205,7 @@ func TestThrottle_Do_maxInflight_caps(t *testing.T) {
 		pt := &peakTracker{}
 		th := throttle.New(constSchedule(0), throttle.WithMaxInflight(cap))
 
+		release := make(chan struct{})
 		var wg sync.WaitGroup
 		const n = 8
 		wg.Add(n)
@@ -206,14 +214,18 @@ func TestThrottle_Do_maxInflight_caps(t *testing.T) {
 				defer wg.Done()
 				_ = th.Do(t.Context(), func(_ context.Context) error {
 					pt.enter()
-					time.Sleep(20 * time.Millisecond)
+					<-release
 					pt.exit()
 					return nil
 				})
 			}()
 		}
+		// Every caller is now inside fn or blocked on a slot.
+		synctest.Wait()
+		assert.Equal(t, int64(cap), pt.inside(), "cap callers should be inside fn together")
+		close(release)
 		wg.Wait()
-		assert.LessOrEqual(t, pt.peak, int64(cap))
+		assert.Equal(t, int64(cap), pt.peak)
 	})
 }
 

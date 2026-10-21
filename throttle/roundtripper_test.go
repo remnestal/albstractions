@@ -149,10 +149,11 @@ func TestRoundTripper_withMaxInflight(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const cap = 2
 		pt := &peakTracker{}
+		release := make(chan struct{})
 		rt := throttle.NewRoundTripper(
 			roundTripperFn(func(_ *http.Request) (*http.Response, error) {
 				pt.enter()
-				time.Sleep(30 * time.Millisecond)
+				<-release
 				pt.exit()
 				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
 			}),
@@ -173,8 +174,12 @@ func TestRoundTripper_withMaxInflight(t *testing.T) {
 				}
 			}()
 		}
+		// Every request is now inside the inner transport or blocked on a slot.
+		synctest.Wait()
+		assert.Equal(t, int64(cap), pt.inside(), "cap requests should be in flight together")
+		close(release)
 		wg.Wait()
-		assert.LessOrEqual(t, pt.peak, int64(cap))
+		assert.Equal(t, int64(cap), pt.peak)
 	})
 }
 
