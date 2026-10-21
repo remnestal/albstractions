@@ -1,6 +1,7 @@
 package mtls
 
 import (
+	"crypto/mldsa"
 	"crypto/tls"
 	"crypto/x509"
 	"io"
@@ -231,6 +232,81 @@ func TestMTLSIntegration(t *testing.T) {
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
 		assert.Equal(t, "mTLS success", string(body))
+	})
+
+	t.Run("peers communicate successfully with ML-DSA certificates", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name      string
+			algorithm pki.KeyAlgorithm
+			params    mldsa.Parameters
+			signature x509.SignatureAlgorithm
+		}{
+			{"ML-DSA-44", pki.MLDSA44(), mldsa.MLDSA44(), x509.MLDSA44},
+			{"ML-DSA-65", pki.MLDSA65(), mldsa.MLDSA65(), x509.MLDSA65},
+			{"ML-DSA-87", pki.MLDSA87(), mldsa.MLDSA87(), x509.MLDSA87},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				// CA and both leaves share the algorithm, so every signature in
+				// the chain and in the handshake is ML-DSA at this level.
+				ca, err := pki.GenerateCA(tt.algorithm, "Test CA", "Test Org", 48*time.Hour)
+				require.NoError(t, err)
+				server, err := pki.GeneratePeerCert(tt.algorithm, ca, "localhost", []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, 24*time.Hour)
+				require.NoError(t, err)
+				client, err := pki.GeneratePeerCert(tt.algorithm, ca, "test-client", []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, 24*time.Hour)
+				require.NoError(t, err)
+
+				serverTLSConfig, err := NewTLSConfig(
+					mock.StaticProvider(server.CertPEM),
+					mock.StaticProvider(server.KeyPEM),
+					mock.StaticProvider(ca.CertPEM),
+				)
+				require.NoError(t, err)
+
+				// Echo the verified client key's parameter set so the server's
+				// view is checked on the test goroutine.
+				srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var level string
+					if pub, ok := r.TLS.VerifiedChains[0][0].PublicKey.(*mldsa.PublicKey); ok {
+						level = pub.Parameters().String()
+					}
+					_, err := w.Write([]byte(level))
+					assert.NoError(t, err)
+				}))
+				srv.TLS = serverTLSConfig
+				srv.StartTLS()
+				defer srv.Close()
+
+				clientTLSConfig, err := NewTLSConfig(
+					mock.StaticProvider(client.CertPEM),
+					mock.StaticProvider(client.KeyPEM),
+					mock.StaticProvider(ca.CertPEM),
+				)
+				require.NoError(t, err)
+
+				c := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSConfig}}
+				resp, err := c.Get(srv.URL)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, resp.Body.Close()) }()
+
+				assert.Equal(t, uint16(tls.VersionTLS13), resp.TLS.Version)
+				peer := resp.TLS.PeerCertificates[0]
+				assert.Equal(t, x509.MLDSA, peer.PublicKeyAlgorithm)
+				assert.Equal(t, tt.signature, peer.SignatureAlgorithm)
+				if pub, ok := peer.PublicKey.(*mldsa.PublicKey); assert.True(t, ok, "server key is %T", peer.PublicKey) {
+					assert.Equal(t, tt.params, pub.Parameters())
+				}
+
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				assert.Equal(t, tt.params.String(), string(body), "client key as verified by the server")
+			})
+		}
 	})
 
 	t.Run("connection fails without client certificate", func(t *testing.T) {

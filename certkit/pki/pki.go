@@ -10,6 +10,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/mldsa"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -32,7 +33,8 @@ type Bundle struct {
 // KeyAlgorithm generates a private key.
 //
 // Use one of the provided constructors ([ECDSAP256], [ECDSAP384], [RSA2048],
-// [RSA4096], [Ed25519]) or supply a custom one.
+// [RSA4096], [Ed25519], [MLDSA44], [MLDSA65], [MLDSA87]) or supply a custom
+// one.
 type KeyAlgorithm func() (crypto.Signer, error)
 
 // ECDSAP256 generates an ECDSA P-256 key.
@@ -68,6 +70,40 @@ func Ed25519() KeyAlgorithm {
 	return func() (crypto.Signer, error) {
 		_, priv, err := ed25519.GenerateKey(rand.Reader)
 		return priv, err
+	}
+}
+
+// MLDSA44 generates an ML-DSA-44 (FIPS 204) post-quantum key.
+//
+// Peers must support ML-DSA signatures in TLS 1.3, as Go does from 1.27.
+func MLDSA44() KeyAlgorithm {
+	return mldsaKey(mldsa.MLDSA44())
+}
+
+// MLDSA65 generates an ML-DSA-65 (FIPS 204) post-quantum key.
+//
+// Peers must support ML-DSA signatures in TLS 1.3, as Go does from 1.27.
+func MLDSA65() KeyAlgorithm {
+	return mldsaKey(mldsa.MLDSA65())
+}
+
+// MLDSA87 generates an ML-DSA-87 (FIPS 204) post-quantum key.
+//
+// Peers must support ML-DSA signatures in TLS 1.3, as Go does from 1.27.
+func MLDSA87() KeyAlgorithm {
+	return mldsaKey(mldsa.MLDSA87())
+}
+
+// mldsaKey returns the key as a nil interface on error, never as a typed nil:
+// unlike the other algorithms, mldsa.GenerateKey can fail, for example in
+// FIPS 140-3 mode with the v1.0.0 module.
+func mldsaKey(params mldsa.Parameters) KeyAlgorithm {
+	return func() (crypto.Signer, error) {
+		key, err := mldsa.GenerateKey(params)
+		if err != nil {
+			return nil, err
+		}
+		return key, nil
 	}
 }
 

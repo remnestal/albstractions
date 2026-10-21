@@ -100,6 +100,7 @@ free() // the key is no longer needed; do not wait for the deferred call
 | Symbol | Effect |
 |--------|--------|
 | `ECDSAP256()`, `ECDSAP384()`, `RSA2048()`, `RSA4096()`, `Ed25519()` | Key algorithm for the generated certificate |
+| `MLDSA44()`, `MLDSA65()`, `MLDSA87()` | Post-quantum ML-DSA (FIPS 204) key. Peers must accept ML-DSA signatures in TLS 1.3, as Go does from 1.27 |
 | `WithMaxPathLen(n)` | CA path length constraint. Default 0, a single-level hierarchy |
 | `WithSerial(n)` | Fixed serial number instead of a random 128-bit one |
 | `WithURIs(uris...)` | URI SANs, for example SPIFFE IDs. Validated as absolute ASCII URIs that round-trip verbatim |

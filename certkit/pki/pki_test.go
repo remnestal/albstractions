@@ -134,6 +134,9 @@ func TestGenerateCA(t *testing.T) {
 			{"RSA 2048", pki.RSA2048()},
 			{"RSA 4096", pki.RSA4096()},
 			{"Ed25519", pki.Ed25519()},
+			{"ML-DSA-44", pki.MLDSA44()},
+			{"ML-DSA-65", pki.MLDSA65()},
+			{"ML-DSA-87", pki.MLDSA87()},
 		}
 
 		for _, tt := range tests {
