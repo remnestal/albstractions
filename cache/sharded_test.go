@@ -36,7 +36,8 @@ func TestHashShard(t *testing.T) {
 	t.Run("is deterministic for a given function", func(t *testing.T) {
 		t.Parallel()
 		h := cache.HashShard[string]()
-		assert.Equal(t, h("key"), h("key"))
+		first, second := h("key"), h("key")
+		assert.Equal(t, first, second)
 	})
 
 	t.Run("works as a Sharded algorithm", func(t *testing.T) {
