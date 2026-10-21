@@ -568,6 +568,24 @@ func TestRun(t *testing.T) {
 		})
 	})
 
+	t.Run("waits for goroutines still finishing after shutdown begins", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			var finished atomic.Bool
+			g.Require("worker", func(ctx context.Context) error {
+				<-ctx.Done()
+				time.Sleep(10 * time.Millisecond) // cleanup after cancellation
+				finished.Store(true)
+				return nil
+			})
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+
+			require.NoError(t, g.Run())
+			assert.True(t, finished.Load(), "Run returned before the worker finished")
+		})
+	})
+
 	t.Run("configured signal triggers shutdown", func(t *testing.T) {
 		t.Parallel()
 		g := lifecycle.New(lifecycle.WithSignals(syscall.SIGUSR1))
