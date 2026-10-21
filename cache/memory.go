@@ -233,8 +233,10 @@ func (m *Memory[K, V]) rebuild() {
 	m.m = fresh
 }
 
-// expired reports whether an entry with the given expiry is expired at now. A
-// zero expiry never expires.
+// expired reports whether an entry with the given expiry is expired at now. An
+// entry expires at the instant of its expiry, so one set with After(0) or
+// At(now) is already gone at the moment it was set. A zero expiry never
+// expires.
 func expired(expiresAt, now time.Time) bool {
-	return !expiresAt.IsZero() && now.After(expiresAt)
+	return !expiresAt.IsZero() && !now.Before(expiresAt)
 }

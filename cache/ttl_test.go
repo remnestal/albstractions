@@ -2,6 +2,7 @@ package cache_test
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/cache"
@@ -73,5 +74,49 @@ func TestWithMaxTTL(t *testing.T) {
 		exp := c.Set("k", 1, cache.Never)
 		assert.False(t, exp.IsZero())
 		assert.WithinDuration(t, time.Now().Add(time.Hour), exp, time.Second)
+	})
+}
+
+func TestAfter(t *testing.T) {
+	t.Parallel()
+
+	t.Run("zero expires the entry at the instant it is set", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			c.Set("k", 1, cache.After(0))
+			_, ok := c.Get("k")
+			assert.False(t, ok)
+		})
+	})
+
+	t.Run("the entry is live until exactly its expiry", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			c.Set("k", 1, cache.After(time.Second))
+
+			time.Sleep(time.Second - time.Nanosecond)
+			_, ok := c.Get("k")
+			assert.True(t, ok, "live a nanosecond before its expiry")
+
+			time.Sleep(time.Nanosecond)
+			_, ok = c.Get("k")
+			assert.False(t, ok, "gone at its expiry")
+		})
+	})
+}
+
+func TestAt(t *testing.T) {
+	t.Parallel()
+
+	t.Run("now expires the entry at the instant it is set", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			c.Set("k", 1, cache.At(time.Now()))
+			_, ok := c.Get("k")
+			assert.False(t, ok)
+		})
 	})
 }
