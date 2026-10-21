@@ -445,17 +445,27 @@ func TestServe(t *testing.T) {
 		record := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
 
 		addr := make(chan string, 1)
+		inHandler := make(chan struct{})
+		release := make(chan struct{})
 		server := &http.Server{
 			Addr: "127.0.0.1:0",
 			BaseContext: func(l net.Listener) context.Context {
 				addr <- l.Addr().String()
 				return context.Background()
 			},
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				record("request")
-				w.WriteHeader(http.StatusOK)
+			Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				close(inHandler)
+				select {
+				case <-release:
+					record("request done")
+				case <-r.Context().Done():
+				}
 			}),
 		}
+		// The request is held open until the server's shutdown begins, so it
+		// is still in flight when teardown starts and a callback run before
+		// the drain would be recorded first.
+		server.RegisterOnShutdown(func() { close(release) })
 		t.Cleanup(func() { _ = server.Close() })
 
 		// Defer registered BEFORE Serve — must still run after server drains.
@@ -466,18 +476,20 @@ func TestServe(t *testing.T) {
 		runErr := make(chan error, 1)
 		go func() { runErr <- g.Run() }()
 
-		resp, err := http.Get("http://" + <-addr + "/")
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+<-addr, nil)
 		require.NoError(t, err)
-		require.NoError(t, resp.Body.Close())
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
+		go func() {
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				_ = resp.Body.Close()
+			}
+		}()
+		<-inHandler
 		g.Shutdown()
 		require.NoError(t, <-runErr)
 
 		mu.Lock()
 		defer mu.Unlock()
-		// server drained (request completed) before callback ran
-		assert.Equal(t, []string{"request", "callback"}, order)
+		assert.Equal(t, []string{"request done", "callback"}, order)
 	})
 
 	t.Run("server registered concurrently with shutdown is always shut down", func(t *testing.T) {
