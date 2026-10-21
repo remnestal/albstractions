@@ -175,6 +175,32 @@ func TestThrottle_Do_cancelledWaiterAdvancesCadence(t *testing.T) {
 	})
 }
 
+func TestThrottle_Do_idleDoesNotBankCalls(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		const delay = 100 * time.Millisecond
+		th := throttle.New(constSchedule(delay))
+		require.NoError(t, th.Do(t.Context(), func(context.Context) error { return nil }))
+
+		// Stay idle for several delays' worth of turns.
+		time.Sleep(5 * delay)
+		idleEnd := time.Now()
+
+		var times []time.Time
+		for range 3 {
+			require.NoError(t, th.Do(t.Context(), func(context.Context) error {
+				times = append(times, time.Now())
+				return nil
+			}))
+		}
+
+		assert.Equal(t, idleEnd, times[0], "the first call after an idle gap should not wait")
+		for i := 1; i < len(times); i++ {
+			assert.Equal(t, delay, times[i].Sub(times[i-1]), "gap between call %d and %d", i-1, i)
+		}
+	})
+}
+
 func TestThrottle_Do_fnErrorPropagated(t *testing.T) {
 	t.Parallel()
 
