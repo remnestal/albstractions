@@ -1,7 +1,9 @@
 package schedule_test
 
 import (
+	"maps"
 	"math/rand/v2"
+	"slices"
 	"testing"
 	"time"
 
@@ -25,6 +27,21 @@ func TestUniform(t *testing.T) {
 			assert.GreaterOrEqual(t, d, lo, "iteration %d", i)
 			assert.LessOrEqual(t, d, hi, "iteration %d", i)
 		}
+	})
+
+	t.Run("returns every value in [lo, hi], including hi", func(t *testing.T) {
+		t.Parallel()
+
+		// A three-value range drawn 100 times from a seeded source hits each
+		// value, so a constant result or an exclusive hi leaves one missing.
+		lo, hi := time.Second, time.Second+2*time.Nanosecond
+		s := schedule.NewUniform(lo, hi, schedule.WithSource(rand.NewPCG(42, 0)))
+
+		seen := make(map[time.Duration]bool)
+		for range 100 {
+			seen[s.Next()] = true
+		}
+		assert.Equal(t, []time.Duration{lo, lo + 1, hi}, slices.Sorted(maps.Keys(seen)))
 	})
 
 	t.Run("returns exact value when lo equals hi", func(t *testing.T) {
