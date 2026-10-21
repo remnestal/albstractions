@@ -75,6 +75,11 @@ type Option func(*Group)
 // WithGracefulTimeout sets the total time budget for graceful shutdown,
 // covering server draining, teardown callbacks, and goroutine drain combined.
 //
+// The budget is cooperative. Teardown callbacks run synchronously and Go
+// cannot interrupt one, so a callback that ignores its context holds Run
+// past the budget; callbacks must return once their context is done for the
+// budget to hold.
+//
 // Defaults to 30s if not provided.
 //
 // Panics if d <= 0.
@@ -176,6 +181,9 @@ func (g *Group) Require(name string, fn func(ctx context.Context) error) {
 // bounded by the overall graceful deadline. Callbacks run sequentially in
 // registration order, after all HTTP servers registered with [Group.Serve]
 // have been fully drained.
+//
+// fn must return once ctx is done. Run waits for each callback to return, so
+// one that ignores ctx delays the rest of shutdown past the graceful budget.
 //
 // Defer may be called before or after [Group.Run]. If called while
 // shutdown is already in progress, the call is a no-op.
