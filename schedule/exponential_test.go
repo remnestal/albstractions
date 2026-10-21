@@ -1,6 +1,7 @@
 package schedule_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -53,5 +54,35 @@ func TestExponential(t *testing.T) {
 		t.Parallel()
 
 		require.Panics(t, func() { schedule.NewExponential(time.Second, 100*time.Millisecond) })
+	})
+}
+
+func TestWithFactor(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		factor float64
+	}{
+		{name: "zero", factor: 0},
+		{name: "negative", factor: -1},
+		{name: "below one", factor: 0.5},
+		{name: "NaN", factor: math.NaN()},
+		{name: "infinite", factor: math.Inf(1)},
+		{name: "negative infinity", factor: math.Inf(-1)},
+	}
+	for _, tc := range tests {
+		t.Run("panics on "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Panics(t, func() { schedule.WithFactor(tc.factor) })
+		})
+	}
+
+	t.Run("one gives a constant delay", func(t *testing.T) {
+		t.Parallel()
+		e := schedule.NewExponential(100*time.Millisecond, time.Second, schedule.WithFactor(1))
+		for range 3 {
+			assert.Equal(t, 100*time.Millisecond, e.Next())
+		}
 	})
 }

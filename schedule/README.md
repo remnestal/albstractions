@@ -95,7 +95,7 @@ s := schedule.NewTokenBucket(rate.NewLimiter(rate.Every(time.Second), 10))
 
 | Option | Applies to | Effect |
 |--------|-----------|--------|
-| `WithFactor(f)` | `Exponential` | Growth multiplier per call. Default 2.0 |
+| `WithFactor(f)` | `Exponential` | Growth multiplier per call; must be finite and >= 1 (1 gives a constant delay). Default 2.0 |
 | `WithSource(src)` | `Uniform` | Random source, for deterministic tests. Default a seeded PCG |
 | `WithClock(fn)` | `Sine` | Clock used to derive phase. Default `time.Now` |
 
