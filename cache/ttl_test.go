@@ -119,4 +119,45 @@ func TestAt(t *testing.T) {
 			assert.False(t, ok)
 		})
 	})
+
+	t.Run("the zero time never expires, so a returned expiry round-trips", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			never := c.Set("a", 1, cache.Never)
+			exp := c.Set("b", 2, cache.At(never))
+			assert.True(t, exp.IsZero(), "got %v", exp)
+
+			time.Sleep(1000 * time.Hour)
+			_, ok := c.Get("b")
+			assert.True(t, ok)
+		})
+	})
+
+	t.Run("the zero time is capped by the maximum like Never", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int](cache.WithMaxTTL(time.Hour))
+			exp := c.Set("k", 1, cache.At(time.Time{}))
+			assert.Equal(t, time.Now().Add(time.Hour), exp)
+		})
+	})
+
+	t.Run("a time beyond the Duration range is kept exactly", func(t *testing.T) {
+		t.Parallel()
+		far := time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC)
+		c := cache.NewMemory[string, int]()
+		exp := c.Set("k", 1, cache.At(far))
+		assert.Equal(t, far, exp)
+	})
+
+	t.Run("a time beyond the Duration range is still capped by the maximum", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			far := time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC)
+			c := cache.NewMemory[string, int](cache.WithMaxTTL(time.Hour))
+			exp := c.Set("k", 1, cache.At(far))
+			assert.Equal(t, time.Now().Add(time.Hour), exp)
+		})
+	})
 }

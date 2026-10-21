@@ -58,7 +58,7 @@ if v, ok := c.Get("token"); ok {
 | Expiry | Meaning |
 |--------|---------|
 | `After(d)` | expire `d` after the set, clamped to the configured bounds |
-| `At(t)` | expire at the absolute time `t`; a past `t` expires immediately |
+| `At(t)` | expire at the absolute time `t`, clamped to the configured bounds like `After`; a past `t` expires immediately unless `WithMinTTL` sets a floor, and the zero `t` means `Never`, so a time returned by `Set` can be passed back |
 | `Never` | never expire |
 | `Default` | use the duration from `WithDefaultTTL`, or `Never` if none is set |
 | `Keep` | replace the value, keep the existing expiry (or `Default` if the key is absent) |

@@ -4,7 +4,8 @@
 `Expiry` is built with `After(d)` (relative) or `At(t)` (absolute), or is one of
 the package values `Never`, `Default`, and `Keep` (the zero `Expiry` is
 `Default`). `Set` returns the resolved absolute expiry (`time.Time`, zero means
-never).
+never), and `At` reads the zero time the same way, so a returned expiry can be
+re-applied with `At`.
 
 A requested lifetime is clamped to the configured `[min, max]` bounds. The
 maximum is a hard ceiling applied to every expiry except `Keep`, including
