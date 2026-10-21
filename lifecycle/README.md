@@ -28,12 +28,15 @@ g := lifecycle.New(
 
 // A required goroutine. Returning an error, or returning nil before the
 // group's context is cancelled, triggers shutdown of the whole group.
+// It closes what it uses itself: Run waits for it only after the Defer
+// callbacks below, so it may still be finishing a job when they run.
 g.Require("worker", func(ctx context.Context) error {
+    defer consumer.Close()
     for {
         select {
         case <-ctx.Done():
             return nil
-        case job := <-queue:
+        case job := <-consumer.Jobs():
             process(job)
         }
     }
@@ -42,7 +45,8 @@ g.Require("worker", func(ctx context.Context) error {
 // Attach an HTTP server: started as a goroutine, drained during teardown.
 g.Serve("api", &http.Server{Addr: ":8080", Handler: mux})
 
-// Teardown callbacks run in registration order, each with its own deadline.
+// Teardown callbacks run in registration order, each with its own deadline,
+// once every server has drained, so mux's handlers are done with db.
 g.Defer(5*time.Second, func(ctx context.Context) {
     db.Close()
 })
@@ -96,7 +100,7 @@ To fold the group into an existing context tree, pass `WithContext`. Cancelling 
 |--------|---------|
 | `Require(name, fn)` | Supervised goroutine. The name identifies it in `ShutdownCause` |
 | `Serve(name, server)` | Runs `ListenAndServe` and registers the server's drain |
-| `Defer(timeout, fn)` | Teardown callback with its own deadline |
+| `Defer(timeout, fn)` | Teardown callback with its own deadline. Runs after servers drain but before `Run` waits for `Require` goroutines |
 | `Run() error` | Starts everything, blocks until shutdown completes. Idempotent |
 | `Shutdown()` | Triggers shutdown. Idempotent, and leaves `ShutdownCause` nil |
 | `Ready() <-chan struct{}` | Closed once pre-`Run` goroutines are spawned and signal handlers installed |

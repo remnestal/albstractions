@@ -182,6 +182,11 @@ func (g *Group) Require(name string, fn func(ctx context.Context) error) {
 // registration order, after all HTTP servers registered with [Group.Serve]
 // have been fully drained.
 //
+// Callbacks run before Run waits for goroutines registered with
+// [Group.Require] to exit, so a goroutine may still be running when they do.
+// A callback must not close a resource such a goroutine may still be using;
+// the goroutine should close what it owns before it returns.
+//
 // fn must return once ctx is done. Run waits for each callback to return, so
 // one that ignores ctx delays the rest of shutdown past the graceful budget.
 //
