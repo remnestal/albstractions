@@ -271,6 +271,24 @@ func TestDefer(t *testing.T) {
 			assert.True(t, cbCtxCancelled.Load())
 		})
 	})
+
+	t.Run("callbacks are skipped once the graceful budget is spent", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			const graceful = 50 * time.Millisecond
+			g := lifecycle.New(lifecycle.WithGracefulTimeout(graceful))
+			// The callback's own timeout is longer than the budget, so the
+			// budget is what ends it.
+			g.Defer(2*graceful, func(ctx context.Context) { <-ctx.Done() })
+			var secondRan atomic.Bool
+			g.Defer(time.Second, func(context.Context) { secondRan.Store(true) })
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+
+			require.NoError(t, g.Run())
+			assert.False(t, secondRan.Load(), "callback ran after the budget was spent")
+		})
+	})
 }
 
 func TestServe(t *testing.T) {
