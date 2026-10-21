@@ -59,7 +59,7 @@ s := schedule.NewUniform(100*time.Millisecond, 500*time.Millisecond,
 
 ### Sine
 
-Oscillates between lo and hi following a raised cosine curve over the given period. Starts at lo, peaks at hi at the midpoint, and returns to lo at the end of each period. Phase is derived from the wall clock rather than the call count, so two calls at the same instant return the same delay and the cadence is independent of how often `Next` is called.
+Oscillates between lo and hi following a raised cosine curve over the given period. Starts at lo, peaks at hi at the midpoint, and returns to lo at the end of each period. Phase is the time elapsed since the first call to `Next` rather than the call count, so two calls at the same instant return the same delay and the cadence is independent of how often `Next` is called. Each `Sine` starts its own cycle on its first `Next`, so instances first called at different times are out of phase with each other.
 
 ```go
 s := schedule.NewSine(100*time.Millisecond, 1*time.Second, time.Minute)
