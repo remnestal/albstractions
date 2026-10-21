@@ -59,7 +59,7 @@ s := schedule.NewUniform(100*time.Millisecond, 500*time.Millisecond,
 
 ### Sine
 
-Oscillates between lo and hi following a raised cosine curve over the given period. Starts at lo, peaks at hi at the midpoint, and returns to lo at the end of each period. Phase is derived from the wall clock rather than the call count, so two calls at the same instant return the same delay and the cadence is independent of how often `Next` is called.
+Oscillates between lo and hi following a raised cosine curve over the given period. Starts at lo, peaks at hi at the midpoint, and returns to lo at the end of each period. Phase is the time elapsed since the first call to `Next` rather than the call count, so two calls at the same instant return the same delay and the cadence is independent of how often `Next` is called. Each `Sine` starts its own cycle on its first `Next`, so instances first called at different times are out of phase with each other.
 
 ```go
 s := schedule.NewSine(100*time.Millisecond, 1*time.Second, time.Minute)
@@ -99,4 +99,4 @@ s := schedule.NewTokenBucket(rate.NewLimiter(rate.Every(time.Second), 10))
 | `WithSource(src)` | `Uniform` | Random source, for deterministic tests. Default a seeded PCG |
 | `WithClock(fn)` | `Sine` | Clock used to derive phase. Default `time.Now` |
 
-Every constructor panics on an invalid range, such as a negative delay or a `hi` below `lo`, so misconfiguration surfaces at startup rather than as a silently wrong cadence.
+`NewConstant`, `NewExponential`, `NewUniform` and `NewSine` panic on an invalid range, such as a negative delay or a `hi` below `lo`, so misconfiguration surfaces at startup rather than as a silently wrong cadence. `WithSource`, `WithClock` and `NewTokenBucket` panic on a nil argument, though a typed nil pointer, such as a nil `*rate.Limiter`, is a non-nil interface and is not caught.

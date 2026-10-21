@@ -44,6 +44,12 @@ func (l *fakeLimiter) Reserve() fakeReservation {
 func TestTokenBucket(t *testing.T) {
 	t.Parallel()
 
+	t.Run("panics on a nil limiter", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Panics(t, func() { schedule.NewTokenBucket[fakeReservation](nil) })
+	})
+
 	t.Run("no delay within burst", func(t *testing.T) {
 		t.Parallel()
 

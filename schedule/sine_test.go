@@ -102,3 +102,13 @@ func TestSine(t *testing.T) {
 		assert.Equal(t, hi, s.Next())
 	})
 }
+
+func TestWithClock(t *testing.T) {
+	t.Parallel()
+
+	t.Run("panics on a nil clock", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Panics(t, func() { schedule.WithClock(nil) })
+	})
+}

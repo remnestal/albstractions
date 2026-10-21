@@ -45,4 +45,27 @@ func TestUniform(t *testing.T) {
 
 		require.Panics(t, func() { schedule.NewUniform(5*time.Second, time.Second) })
 	})
+
+	t.Run("draws over the full range [0, math.MaxInt64]", func(t *testing.T) {
+		t.Parallel()
+
+		// hi-lo+1 is 2^63 here, one past the largest int64.
+		const maxDuration = time.Duration(1<<63 - 1)
+		s := schedule.NewUniform(0, maxDuration, schedule.WithSource(rand.NewPCG(42, 0)))
+		assert.NotPanics(t, func() {
+			for i := range 100 {
+				assert.GreaterOrEqual(t, s.Next(), time.Duration(0), "iteration %d", i)
+			}
+		})
+	})
+}
+
+func TestWithSource(t *testing.T) {
+	t.Parallel()
+
+	t.Run("panics on a nil source", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Panics(t, func() { schedule.WithSource(nil) })
+	})
 }

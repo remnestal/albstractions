@@ -11,9 +11,13 @@ import (
 // rises to hi at the midpoint, and returns to lo at the end — giving a smooth
 // ease-in / ease-out cadence.
 //
-// The phase is derived from the wall clock, not from call count. Two calls made
-// at the same instant return the same delay, and the oscillation continues
-// independently of how often [Sine.Next] is called.
+// The phase is the time elapsed since the first call to [Sine.Next], not the
+// call count. Two calls made at the same instant return the same delay, and the
+// oscillation continues independently of how often Next is called.
+//
+// Each Sine starts its own cycle on its first Next, so two instances first
+// called at different times are out of phase. The default clock measures that
+// elapsed time monotonically, so a wall-clock jump does not shift the phase.
 type Sine struct {
 	lo      time.Duration
 	hi      time.Duration
@@ -30,7 +34,12 @@ type SineOption func(*Sine)
 // WithClock overrides the clock function used to measure elapsed time.
 //
 // Useful for deterministic tests.
+//
+// Panics if fn is nil.
 func WithClock(fn func() time.Time) SineOption {
+	if fn == nil {
+		panic("schedule.WithClock: fn must not be nil")
+	}
 	return func(s *Sine) { s.clockFn = fn }
 }
 
