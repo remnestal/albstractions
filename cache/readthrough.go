@@ -107,6 +107,9 @@ func NewReadThrough[K comparable, V any](front Cache[K, V], load Loader[K, V], o
 //
 // It lets a slower cache act as the backing source for a faster one, so that
 // read-through tiers compose: NewReadThrough(l1, LoaderFromCache(l2)).
+//
+// The loader does not own c. Closing a [ReadThrough] built on it closes only
+// that wrapper's front, so close c separately when it holds resources.
 func LoaderFromCache[K comparable, V any](c Cache[K, V]) Loader[K, V] {
 	return func(ctx context.Context, key K) (V, error) {
 		v, ok, err := c.GetContext(ctx, key)
@@ -175,7 +178,9 @@ func (r *ReadThrough[K, V]) ItemsContext(ctx context.Context) (iter.Seq2[K, V], 
 // Close closes the front cache if it implements io.Closer.
 //
 // Closing a wrapper closes the layer beneath it, so closing the outermost cache
-// in a stack stops the background maintenance of every [Memory] within it.
+// in a stack stops the background maintenance of every [Memory] within it. A
+// cache reachable only through a loader, such as one passed to
+// [LoaderFromCache], is not part of the stack and must be closed separately.
 func (r *ReadThrough[K, V]) Close() error {
 	if c, ok := r.front.(io.Closer); ok {
 		return c.Close()
