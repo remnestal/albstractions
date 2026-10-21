@@ -777,7 +777,7 @@ func TestDone(t *testing.T) {
 func TestReady(t *testing.T) {
 	t.Parallel()
 
-	t.Run("closed after pre-registered goroutines are spawned", func(t *testing.T) {
+	t.Run("closed once Run starts and still closed after it returns", func(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
 			g := lifecycle.New()
@@ -795,8 +795,12 @@ func TestReady(t *testing.T) {
 			default:
 			}
 
+			// That pre-registered goroutines are spawned before Ready closes
+			// is not observable from outside the package; the test checks
+			// only that the worker runs once the group is ready.
 			go func() {
 				<-g.Ready()
+				<-started
 				g.Shutdown()
 			}()
 
