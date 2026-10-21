@@ -24,11 +24,22 @@ import (
 type Provider func() (key []byte, free func(), err error)
 
 // Decoder is a function that decodes a string into bytes.
+//
+// The provider takes ownership of the returned slice and zeros it, on error as
+// well as on free, so a Decoder may return a partly filled buffer with its
+// error, as the encoding/hex and encoding/base64 DecodeString functions do.
+//
+// A Decoder necessarily receives the encoded key as a string copy, which
+// cannot be zeroed. The built-in hex and base64 options avoid that copy by
+// decoding bytes to bytes.
 type Decoder func(string) ([]byte, error)
+
+// decodeFunc is the byte-wise form of [Decoder] that processKey runs.
+type decodeFunc func([]byte) ([]byte, error)
 
 type envConfig struct {
 	getter         func(string) string
-	decoder        Decoder
+	decode         decodeFunc
 	trimWhitespace bool
 }
 
@@ -44,9 +55,11 @@ func WithEnvGetter(getter func(string) string) EnvOption {
 }
 
 // WithEnvDecoder sets a decoder for the environment variable value.
+//
+// decoder sees an unzeroable string copy of the value; see [Decoder].
 func WithEnvDecoder(decoder Decoder) EnvOption {
 	return func(c *envConfig) {
-		c.decoder = decoder
+		c.decode = fromDecoder(decoder)
 	}
 }
 
@@ -63,13 +76,17 @@ func WithEnvTrimWhitespace() EnvOption {
 
 // WithEnvHex sets hex decoding for the environment variable value.
 func WithEnvHex() EnvOption {
-	return WithEnvDecoder(hex.DecodeString)
+	return func(c *envConfig) {
+		c.decode = decodeHex
+	}
 }
 
 // WithEnvBase64 sets base64 decoding (standard encoding) for the
 // environment variable value.
 func WithEnvBase64() EnvOption {
-	return WithEnvDecoder(base64.StdEncoding.DecodeString)
+	return func(c *envConfig) {
+		c.decode = decodeBase64
+	}
 }
 
 // FromEnv returns a [Provider] that reads a key from an environment variable.
@@ -94,7 +111,7 @@ func FromEnv(envVar string, opts ...EnvOption) Provider {
 			return nil, func() {}, fmt.Errorf("environment variable %s is not set or empty", envVar)
 		}
 
-		return processKey([]byte(val), cfg.trimWhitespace, cfg.decoder)
+		return processKey([]byte(val), cfg.trimWhitespace, cfg.decode)
 	}
 }
 
@@ -117,7 +134,7 @@ func (osfs) Stat(name string) (fs.FileInfo, error) {
 
 type fileConfig struct {
 	filesystem       FileSystem
-	decoder          Decoder
+	decode           decodeFunc
 	trimWhitespace   bool
 	checkPermissions bool
 }
@@ -133,9 +150,11 @@ func WithFilesystem(filesystem FileSystem) FileOption {
 }
 
 // WithFileDecoder sets a decoder for the file contents.
+//
+// decoder sees an unzeroable string copy of the contents; see [Decoder].
 func WithFileDecoder(decoder Decoder) FileOption {
 	return func(c *fileConfig) {
-		c.decoder = decoder
+		c.decode = fromDecoder(decoder)
 	}
 }
 
@@ -159,13 +178,17 @@ func WithoutPermissionCheck() FileOption {
 
 // WithFileHex sets hex decoding for the file contents.
 func WithFileHex() FileOption {
-	return WithFileDecoder(hex.DecodeString)
+	return func(c *fileConfig) {
+		c.decode = decodeHex
+	}
 }
 
 // WithFileBase64 sets base64 decoding (standard encoding) for the file
 // contents.
 func WithFileBase64() FileOption {
-	return WithFileDecoder(base64.StdEncoding.DecodeString)
+	return func(c *fileConfig) {
+		c.decode = decodeBase64
+	}
 }
 
 // FromFile returns a [Provider] that reads a key from a file.
@@ -206,7 +229,7 @@ func FromFile(path string, opts ...FileOption) Provider {
 			return nil, func() {}, fmt.Errorf("key file %s is empty", path)
 		}
 
-		return processKey(data, cfg.trimWhitespace, cfg.decoder)
+		return processKey(data, cfg.trimWhitespace, cfg.decode)
 	}
 }
 
@@ -215,7 +238,7 @@ func FromFile(path string, opts ...FileOption) Provider {
 //
 // It takes ownership of data — callers must not use data after this call,
 // and must call the returned free function to zero all key material.
-func processKey(data []byte, trimWhitespace bool, decoder Decoder) ([]byte, func(), error) {
+func processKey(data []byte, trimWhitespace bool, decode decodeFunc) ([]byte, func(), error) {
 	if trimWhitespace {
 		original := data
 		defer clear(original)
@@ -230,10 +253,11 @@ func processKey(data []byte, trimWhitespace bool, decoder Decoder) ([]byte, func
 		}
 	}
 
-	if decoder != nil {
+	if decode != nil {
 		defer clear(data)
-		decoded, err := decoder(string(data))
+		decoded, err := decode(data)
 		if err != nil {
+			clear(decoded)
 			return nil, func() {}, fmt.Errorf("decode key: %w", err)
 		}
 		if len(decoded) == 0 {
@@ -243,4 +267,30 @@ func processKey(data []byte, trimWhitespace bool, decoder Decoder) ([]byte, func
 	}
 
 	return data, func() { clear(data) }, nil
+}
+
+// fromDecoder adapts a [Decoder] to a decodeFunc. A nil decoder stays nil, so
+// it still means "no decoding".
+func fromDecoder(decoder Decoder) decodeFunc {
+	if decoder == nil {
+		return nil
+	}
+	return func(data []byte) ([]byte, error) {
+		return decoder(string(data))
+	}
+}
+
+// decodeHex and decodeBase64 decode into a buffer they allocate, without the
+// string copies of the DecodeString functions. Like those, they return the
+// bytes written so far alongside any error, for processKey to zero.
+func decodeHex(data []byte) ([]byte, error) {
+	dst := make([]byte, hex.DecodedLen(len(data)))
+	n, err := hex.Decode(dst, data)
+	return dst[:n], err
+}
+
+func decodeBase64(data []byte) ([]byte, error) {
+	dst := make([]byte, base64.StdEncoding.DecodedLen(len(data)))
+	n, err := base64.StdEncoding.Decode(dst, data)
+	return dst[:n], err
 }

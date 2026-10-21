@@ -79,6 +79,8 @@ cert, err := tls.X509KeyPair(certPEM, key)
 free() // the key is no longer needed; do not wait for the deferred call
 ```
 
+The built-in hex and base64 options decode from bytes to bytes into buffers the provider zeroes, also when decoding fails. A custom `Decoder` necessarily receives the encoded key as a Go string, a copy that cannot be zeroed.
+
 `FromFile` refuses to read a file whose mode is looser than `0600`. Pass `WithoutPermissionCheck` to opt out where the platform makes that impractical.
 
 ## Options

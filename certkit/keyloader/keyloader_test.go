@@ -160,6 +160,31 @@ func TestFromEnv(t *testing.T) {
 		}
 	})
 
+	t.Run("zeros a partly decoded key when the decoder fails", func(t *testing.T) {
+		t.Parallel()
+
+		// "sec" in hex, then an invalid digit: hex.DecodeString returns the
+		// three bytes it decoded along with its error.
+		var partial []byte
+		spy := func(s string) ([]byte, error) {
+			var err error
+			partial, err = hex.DecodeString(s)
+			return partial, err
+		}
+
+		getter := mockEnvGetter(map[string]string{
+			"TEST_KEY": "736563zz",
+		})
+
+		provider := keyloader.FromEnv("TEST_KEY", keyloader.WithEnvGetter(getter), keyloader.WithEnvDecoder(spy))
+		key, free, err := provider()
+		defer free()
+
+		assert.ErrorContains(t, err, "decode key")
+		assert.Nil(t, key)
+		assert.Equal(t, make([]byte, 3), partial)
+	})
+
 	t.Run("custom decoder option works", func(t *testing.T) {
 		t.Parallel()
 
@@ -460,6 +485,33 @@ func TestFromFile(t *testing.T) {
 		for i, b := range key {
 			assert.Equal(t, byte(0), b, "byte at index %d should be zeroed", i)
 		}
+	})
+
+	t.Run("zeros a partly decoded key when the decoder fails", func(t *testing.T) {
+		t.Parallel()
+
+		// "sec" in hex, then an invalid digit: hex.DecodeString returns the
+		// three bytes it decoded along with its error.
+		var partial []byte
+		spy := func(s string) ([]byte, error) {
+			var err error
+			partial, err = hex.DecodeString(s)
+			return partial, err
+		}
+
+		mfs := &mock.FileSystem{
+			Files: map[string]mock.File{
+				"/key.txt": {Data: []byte("736563zz"), Mode: 0600},
+			},
+		}
+
+		provider := keyloader.FromFile("/key.txt", keyloader.WithFilesystem(mfs), keyloader.WithFileDecoder(spy))
+		key, free, err := provider()
+		defer free()
+
+		assert.ErrorContains(t, err, "decode key")
+		assert.Nil(t, key)
+		assert.Equal(t, make([]byte, 3), partial)
 	})
 
 	t.Run("custom decoder option works", func(t *testing.T) {
