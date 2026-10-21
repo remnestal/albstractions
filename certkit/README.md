@@ -38,11 +38,13 @@ Both return a `Bundle` of PEM-encoded `CertPEM` and `KeyPEM` bytes.
 
 `NewTLSConfig` produces a config usable for both server and client roles, with TLS 1.3 as the floor and `RequireAndVerifyClientCert` enabled. The CA provider populates both `ClientCAs` and `RootCAs`.
 
+`FromFile` applies its `0600` check to every file it reads, so the certificate and CA providers opt out with `WithoutPermissionCheck`: those files are public and usually `0644`.
+
 ```go
 tlsCfg, err := mtls.NewTLSConfig(
-    keyloader.FromFile("/etc/myservice/cert.pem"),
+    keyloader.FromFile("/etc/myservice/cert.pem", keyloader.WithoutPermissionCheck()),
     keyloader.FromFile("/etc/myservice/key.pem"),
-    keyloader.FromFile("/etc/myservice/ca.pem"),
+    keyloader.FromFile("/etc/myservice/ca.pem", keyloader.WithoutPermissionCheck()),
 )
 
 srv := &http.Server{Addr: ":8443", Handler: mux, TLSConfig: tlsCfg}
@@ -58,7 +60,7 @@ For the client side of the same connection, add `mtls.WithServerName` so verific
 tlsCfg, err := mtls.NewTLSConfig(
     keyloader.FromEnv("SERVICE_CERT", keyloader.WithEnvBase64()),
     keyloader.FromEnv("SERVICE_KEY", keyloader.WithEnvBase64()),
-    keyloader.FromFile("/etc/myservice/ca.pem"),
+    keyloader.FromFile("/etc/myservice/ca.pem", keyloader.WithoutPermissionCheck()),
 )
 ```
 
