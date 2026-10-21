@@ -14,7 +14,7 @@ A `Retry` is constructed from a [`Schedule`](https://pkg.go.dev/github.com/remne
 
 Stop conditions are composable. Assemble a budget with `Any` (whichever fires first) or `All` (only when all fire) from the building blocks `MaxAttempts`, `MaxElapsed`, and `OnError`.
 
-Both dependencies are declared as local interfaces, so `retry` imports nothing. Any type with a `Next() time.Duration` method fits, including every implementation in the `schedule` module.
+The schedule is a local interface and the stop condition a plain function type, so `retry` has no non-standard-library imports. Any type with a `Next() time.Duration` method fits, including every implementation in the `schedule` module.
 
 ## Usage
 
