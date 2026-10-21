@@ -20,7 +20,12 @@ type RoundTripper struct {
 //
 // If next is nil, http.DefaultTransport is used. Options are forwarded to the
 // underlying [Throttle].
+//
+// Panics if s is nil.
 func NewRoundTripper(next http.RoundTripper, s Schedule, opts ...Option) *RoundTripper {
+	if s == nil {
+		panic("throttle.NewRoundTripper: schedule must not be nil")
+	}
 	if next == nil {
 		next = http.DefaultTransport
 	}

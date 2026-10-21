@@ -62,7 +62,12 @@ func WithMaxInflight(n int) Option {
 // New returns a [Throttle] paced by s.
 //
 // By default invocations are serial; pass [WithMaxInflight] to change this.
+//
+// Panics if s is nil.
 func New(s Schedule, opts ...Option) *Throttle {
+	if s == nil {
+		panic("throttle.New: schedule must not be nil")
+	}
 	t := &Throttle{
 		schedule: s,
 		sem:      make(chan struct{}, 1),

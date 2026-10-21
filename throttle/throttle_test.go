@@ -257,3 +257,21 @@ func TestNew_panicsOnInvalidMaxInflight(t *testing.T) {
 		assert.NotPanics(t, func() { throttle.WithMaxInflight(throttle.Unbounded) })
 	})
 }
+
+func TestNew(t *testing.T) {
+	t.Parallel()
+
+	t.Run("panics on nil schedule", func(t *testing.T) {
+		t.Parallel()
+		assert.PanicsWithValue(t, "throttle.New: schedule must not be nil", func() { throttle.New(nil) })
+	})
+}
+
+func TestNewRoundTripper(t *testing.T) {
+	t.Parallel()
+
+	t.Run("panics on nil schedule", func(t *testing.T) {
+		t.Parallel()
+		assert.PanicsWithValue(t, "throttle.NewRoundTripper: schedule must not be nil", func() { throttle.NewRoundTripper(nil, nil) })
+	})
+}
