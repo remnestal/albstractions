@@ -29,6 +29,14 @@ task tidy          # apply go mod tidy across every module
 task hooks:install # one-time per clone: enable the versioned pre-commit hook
 ```
 
+golangci-lint reads the root `.golangci.yml`, found by walking up from each
+module directory, so `task lint`, CI and a bare `golangci-lint run ./...` in a
+module all use it. Beyond the standard linters it enforces the Testing
+Conventions below: `paralleltest`/`tparallel` for `t.Parallel()`, `thelper`,
+`usetesting`, and `testifylint` (including `go-require`, no `require` off the
+test goroutine). `go-require` checks `go` statements only, not
+`sync.WaitGroup.Go` bodies, so review still covers those.
+
 `task hooks:install` points `core.hooksPath` at `.githooks/`, whose `pre-commit`
 hook runs `task verify`. Bypass for WIP with `git commit --no-verify`.
 
