@@ -79,7 +79,7 @@ if err := g.Run(); err != nil {
 }
 ```
 
-To fold the group into an existing context tree, pass `WithContext`. Cancelling the parent triggers shutdown and its error becomes the cause. `g.Context()` is the group's own context, valid before `Run` and cancelled when shutdown begins.
+To fold the group into an existing context tree, pass `WithContext`. Cancelling the parent triggers shutdown, and its `context.Cause` becomes the shutdown cause, so a cause passed to a `context.CancelCauseFunc` survives. The parent's values, such as trace IDs or loggers, reach `g.Context()` and every goroutine. Its deadline does not: `g.Context()` is the group's own context, valid before `Run` and cancelled only when shutdown begins.
 
 ## Options
 
@@ -87,7 +87,7 @@ To fold the group into an existing context tree, pass `WithContext`. Cancelling 
 |--------|--------|
 | `WithGracefulTimeout(d)` | Total budget for the whole teardown: server drain, callbacks, and goroutine exit combined. Default 30s |
 | `WithSignals(sigs...)` | OS signals that trigger shutdown. None by default |
-| `WithContext(ctx)` | Parent context whose cancellation triggers shutdown and becomes the cause |
+| `WithContext(ctx)` | Parent context whose cancellation triggers shutdown and whose `context.Cause` becomes the cause. Its values reach every goroutine |
 | `WithErrorHandler(fn)` | Called for each goroutine error as it is collected. May be called concurrently |
 
 ## Group API

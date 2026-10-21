@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/lifecycle"
@@ -746,6 +747,51 @@ func TestWithContext(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("Run did not return after parent context was cancelled")
 		}
+	})
+
+	t.Run("goroutines see the parent's values", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			type key struct{}
+			parent := context.WithValue(t.Context(), key{}, "trace-id")
+			g := lifecycle.New(lifecycle.WithContext(parent))
+			assert.Equal(t, "trace-id", g.Context().Value(key{}), "group context before Run")
+
+			seen := make(chan any, 1)
+			g.Require("reader", func(ctx context.Context) error {
+				seen <- ctx.Value(key{})
+				<-ctx.Done()
+				return nil
+			})
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+
+			require.NoError(t, g.Run())
+			assert.Equal(t, "trace-id", <-seen, "goroutine context")
+		})
+	})
+
+	t.Run("cause is the parent's cancellation cause", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			sentinel := errors.New("rollback")
+			parent, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+
+			g := lifecycle.New(lifecycle.WithContext(parent))
+			// The cause must already be recorded when goroutines see the
+			// group's context cancelled.
+			atCancel := make(chan error, 1)
+			g.Require("waiting", func(ctx context.Context) error {
+				<-ctx.Done()
+				atCancel <- g.ShutdownCause()
+				return nil
+			})
+			go func() { time.Sleep(10 * time.Millisecond); cancel(sentinel) }()
+
+			require.NoError(t, g.Run())
+			require.ErrorIs(t, g.ShutdownCause(), sentinel)
+			assert.ErrorIs(t, <-atCancel, sentinel, "cause seen by a goroutine woken by the cancellation")
+		})
 	})
 
 	t.Run("cause is parent context error", func(t *testing.T) {

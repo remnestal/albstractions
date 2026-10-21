@@ -90,7 +90,13 @@ func WithGracefulTimeout(d time.Duration) Option {
 // WithContext ties the group's lifetime to a parent context.
 //
 // When the parent context is cancelled, shutdown is triggered and
-// [Group.ShutdownCause] returns the parent's error.
+// [Group.ShutdownCause] returns the parent's cause, as reported by
+// context.Cause: the cause given to a context.CancelCauseFunc, or the
+// parent's error when none was given.
+//
+// The group's context, and so every goroutine's, carries the parent's
+// values. It does not inherit the parent's deadline: it is cancelled only
+// once shutdown begins, after the cause has been recorded.
 func WithContext(ctx context.Context) Option {
 	return func(g *Group) {
 		g.cfg.parentCtx = ctx
@@ -128,17 +134,21 @@ func WithErrorHandler(fn func(error)) Option {
 // [WithGracefulTimeout]. Use [WithSignals] to trigger shutdown on OS signals,
 // and [WithContext] to tie the group's lifetime to a parent context.
 func New(opts ...Option) *Group {
-	ctx, cancel := context.WithCancel(context.Background())
 	g := &Group{
-		cfg:    config{graceful: defaultGracefulTimeout},
-		ctx:    ctx,
-		cancel: cancel,
-		done:   make(chan struct{}),
-		ready:  make(chan struct{}),
+		cfg:   config{graceful: defaultGracefulTimeout},
+		done:  make(chan struct{}),
+		ready: make(chan struct{}),
 	}
 	for _, o := range opts {
 		o(g)
 	}
+	// The parent contributes values only. Its cancellation reaches the group
+	// through shutdown, which records the cause before cancelling g.ctx.
+	base := context.Background()
+	if g.cfg.parentCtx != nil {
+		base = context.WithoutCancel(g.cfg.parentCtx)
+	}
+	g.ctx, g.cancel = context.WithCancel(base)
 	return g
 }
 
@@ -256,11 +266,11 @@ func (g *Group) Ready() <-chan struct{} {
 // ShutdownCause returns why shutdown was triggered autonomously by the group.
 //
 // Returns nil if shutdown was triggered by an explicit [Group.Shutdown] call.
-// Returns [ErrSignal] if an OS signal was received, the parent context's error
-// if [WithContext] was used, or a wrapped error naming the goroutine when a
-// registered goroutine fails or exits prematurely. When multiple goroutines
-// fail simultaneously, the cause is the first error recorded; [Group.Run]'s
-// return value contains all errors.
+// Returns [ErrSignal] if an OS signal was received, the parent context's cause
+// (see context.Cause) if [WithContext] was used, or a wrapped error naming the
+// goroutine when a registered goroutine fails or exits prematurely. When
+// multiple goroutines fail simultaneously, the cause is the first error
+// recorded; [Group.Run]'s return value contains all errors.
 //
 // The returned value is stable once Run returns (or [Group.Done] is closed).
 func (g *Group) ShutdownCause() error {
@@ -312,13 +322,9 @@ func (g *Group) run() error {
 	}
 
 	if g.cfg.parentCtx != nil {
-		go func() {
-			select {
-			case <-g.cfg.parentCtx.Done():
-				g.shutdown(g.cfg.parentCtx.Err())
-			case <-g.ctx.Done():
-			}
-		}()
+		parent := g.cfg.parentCtx
+		stop := context.AfterFunc(parent, func() { g.shutdown(context.Cause(parent)) })
+		defer stop()
 	}
 
 	if len(g.cfg.signals) > 0 {
