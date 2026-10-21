@@ -64,10 +64,12 @@ then `Do` resets it at the start of every invocation, so backoff never carries o
 | Builder | Halts when |
 |---------|------------|
 | `MaxAttempts(n)` | the n-th failed attempt completes |
-| `MaxElapsed(d)` | cumulative time since `Do` started reaches `d` |
+| `MaxElapsed(d)` | cumulative time since `Do` started reaches `d`, checked after each failed attempt |
 | `OnError(pred)` | `pred(err)` returns `true` for the latest error |
 | `Any(stops...)` | any of `stops` halts (logical OR) |
 | `All(stops...)` | all of `stops` halt (logical AND) |
+
+`MaxElapsed` is a budget, not a deadline. It is checked only after a failed attempt, and the delay that follows is never shortened to fit what remains, so `Do` can run past `d` by up to one delay plus one attempt. For a hard deadline, bound the `ctx` passed to `Do` with `context.WithTimeout`.
 
 ## Observation hook
 
