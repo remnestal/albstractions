@@ -152,6 +152,29 @@ func TestThrottle_Do_contextCancelDuringWait(t *testing.T) {
 	})
 }
 
+func TestThrottle_Do_cancelledWaiterAdvancesCadence(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		const delay = time.Second
+		th := throttle.New(constSchedule(delay))
+		start := time.Now()
+		require.NoError(t, th.Do(t.Context(), func(context.Context) error { return nil }))
+
+		// This caller takes the turn at 1s, then gives up during the paced wait.
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		require.ErrorIs(t, th.Do(ctx, func(context.Context) error { return nil }), context.DeadlineExceeded)
+
+		// The abandoned turn stays taken, so the next caller gets the one after it.
+		var started time.Duration
+		require.NoError(t, th.Do(t.Context(), func(context.Context) error {
+			started = time.Since(start)
+			return nil
+		}))
+		assert.Equal(t, 2*delay, started)
+	})
+}
+
 func TestThrottle_Do_fnErrorPropagated(t *testing.T) {
 	t.Parallel()
 
