@@ -12,7 +12,7 @@ go get github.com/remnestal/albstractions/throttle
 
 A `Throttle` wraps a [`Schedule`](https://pkg.go.dev/github.com/remnestal/albstractions/schedule) and ensures calls are spaced by at least the duration it returns. The first call is never delayed. By default invocations run serially, one at a time; use `WithMaxInflight` to allow more concurrency.
 
-Pacing and concurrency are separate knobs. The schedule decides how often a call may start, irrespective of whether earlier calls have completed; `WithMaxInflight` decides how many may be in flight at once.
+Pacing and concurrency are separate knobs. The schedule decides how often a call may start, irrespective of whether earlier calls have completed; `WithMaxInflight` decides how many may be in flight at once, counting callers still waiting for their dispatch time.
 
 ## Usage
 
@@ -67,6 +67,6 @@ client := &http.Client{Transport: throttle.NewRoundTripper(nil, s)}
 
 `Do` returns `ctx.Err()` if the context is cancelled while waiting for its slot, either for the paced delay or for an in-flight slot. `RoundTrip` uses `req.Context()`, so a cancelled request stops waiting too.
 
-A cancelled waiter still leaves the cadence advanced. That is deliberate: it prevents a queue of cancelled callers from handing the next caller a free burst. An idle throttle does not accumulate credit either, so a long pause is not followed by a rush of immediate calls.
+Callers first queue for an in-flight slot and take their turn in the cadence once they hold one. A caller cancelled while queued leaves the cadence untouched. A caller cancelled during the paced delay has already taken its turn, and it stays taken, so a run of cancelled callers cannot hand the next caller a free burst. An idle throttle does not accumulate credit either, so a long pause is not followed by a rush of immediate calls.
 
 If banking idle time is what you want, pace the throttle with `schedule.TokenBucket` instead. A token bucket refills while idle up to its burst size, so a quiet period earns an allowance that the next callers can spend at once.

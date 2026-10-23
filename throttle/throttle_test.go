@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/throttle"
@@ -235,6 +236,94 @@ func TestThrottle_Do_maxInflight_contextCancelDuringAcquire(t *testing.T) {
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.False(t, called.Load())
 	wg.Wait()
+}
+
+func TestThrottle_Do(t *testing.T) {
+	t.Parallel()
+
+	t.Run("keeps spacing when callers queue for an in-flight slot", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			const delay = 100 * time.Millisecond
+			th := throttle.New(constSchedule(delay)) // default: one in flight
+
+			// The first call holds the only slot long enough for the others'
+			// pacing slots to pass while they wait for it.
+			durations := []time.Duration{time.Second, time.Millisecond, time.Millisecond}
+			starts := make([]time.Time, len(durations))
+			var wg sync.WaitGroup
+			for i, d := range durations {
+				wg.Go(func() {
+					_ = th.Do(t.Context(), func(context.Context) error {
+						starts[i] = time.Now()
+						time.Sleep(d)
+						return nil
+					})
+				})
+				synctest.Wait() // fix arrival order
+			}
+			wg.Wait()
+
+			for i := 1; i < len(starts); i++ {
+				assert.GreaterOrEqual(t, starts[i].Sub(starts[i-1]), delay, "gap before call %d", i)
+			}
+		})
+	})
+
+	t.Run("does not consume a schedule step for a caller cancelled while queued for an in-flight slot", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			s := &countingSchedule{}
+			th := throttle.New(s)
+
+			var wg sync.WaitGroup
+			wg.Go(func() {
+				_ = th.Do(t.Context(), func(context.Context) error {
+					time.Sleep(time.Second)
+					return nil
+				})
+			})
+			synctest.Wait() // the first call holds the only slot
+
+			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer cancel()
+			err := th.Do(ctx, func(context.Context) error { return nil })
+			wg.Wait()
+
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.Equal(t, int64(1), s.calls.Load(), "only the first call should take a turn")
+		})
+	})
+
+	t.Run("does not consume a schedule step when ctx is already cancelled", func(t *testing.T) {
+		t.Parallel()
+		s := &countingSchedule{}
+		th := throttle.New(s)
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		// With a free slot the semaphore select is a coin flip, so repeat.
+		for range 100 {
+			_ = th.Do(ctx, func(context.Context) error { return nil })
+		}
+		assert.Zero(t, s.calls.Load())
+	})
+
+	t.Run("releases the in-flight slot when cancelled during the paced wait", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			th := throttle.New(constSchedule(time.Second))
+			require.NoError(t, th.Do(t.Context(), func(context.Context) error { return nil }))
+
+			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer cancel()
+			err := th.Do(ctx, func(context.Context) error { return nil })
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+
+			// A held slot would leave this call blocked and the bubble deadlocked.
+			assert.NoError(t, th.Do(t.Context(), func(context.Context) error { return nil }))
+		})
+	})
 }
 
 func TestNew_panicsOnInvalidMaxInflight(t *testing.T) {
