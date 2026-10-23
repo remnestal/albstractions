@@ -19,6 +19,16 @@ type Schedule interface {
 	Next() time.Duration
 }
 
+// Waiter is the optional capability for schedules that decide per caller when
+// it may proceed, such as a token bucket that reserves one token per call.
+//
+// When the [Schedule] passed to [New] implements Waiter, [Throttle.Do] calls
+// Wait instead of spacing calls by Next, and returns Wait's error without
+// calling fn. Next is never called for such a schedule.
+type Waiter interface {
+	Wait(ctx context.Context) error
+}
+
 // Throttle paces calls according to a [Schedule].
 //
 // By default a Throttle runs fn invocations serially (one at a time). Use
@@ -82,12 +92,15 @@ func New(s Schedule, opts ...Option) *Throttle {
 //
 // Consecutive Do calls on the same Throttle start at least s.Next() apart,
 // even when callers queued behind a slow fn; the first call is not delayed.
+// When the schedule is a [Waiter], it decides instead when each caller may
+// proceed, and may delay or refuse even the first call.
 //
 // If ctx is done before fn runs, Do returns ctx.Err() without calling fn. A
 // caller cancelled during the paced wait has already taken its turn, so the
 // cadence still advances and a later caller cannot burst. A caller cancelled
 // before Do or while queued for an in-flight slot takes no turn and leaves the
-// cadence untouched.
+// cadence untouched. With a [Waiter], what a cancelled caller gives back is up
+// to the waiter; schedule.TokenBucket returns its token to later reservations.
 func (t *Throttle) Do(ctx context.Context, fn func(context.Context) error) error {
 	// Take the in-flight slot before the pacing slot, so a caller that queued
 	// behind a slow fn still waits a full delay after the previous start.
@@ -110,8 +123,12 @@ func (t *Throttle) Do(ctx context.Context, fn func(context.Context) error) error
 	return fn(ctx)
 }
 
-// pace blocks until the caller's dispatch time, advancing the cadence.
+// pace blocks until the caller's dispatch time, advancing the cadence, or
+// defers to the schedule when it implements [Waiter].
 func (t *Throttle) pace(ctx context.Context) error {
+	if w, ok := t.schedule.(Waiter); ok {
+		return w.Wait(ctx)
+	}
 	return sleep(ctx, t.nextSlot(t.schedule.Next()))
 }
 

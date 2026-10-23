@@ -91,6 +91,8 @@ type Limiter[R Reservation] interface {
 s := schedule.NewTokenBucket(rate.NewLimiter(rate.Every(time.Second), 10))
 ```
 
+`TokenBucket` also has a blocking `Wait(ctx)`. When the limiter has its own `Wait`, as `*rate.Limiter` does, it delegates to it, so a caller cancelled while waiting hands its token back to later reservations and a deadline the limiter cannot meet fails at once. A limiter that can never grant capacity makes `Wait` return `ErrRefused`. `throttle` paces through `Wait` when the schedule has one.
+
 ## Options
 
 | Option | Applies to | Effect |

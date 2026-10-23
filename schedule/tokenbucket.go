@@ -1,6 +1,9 @@
 package schedule
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"math"
 	"time"
 )
@@ -71,4 +74,66 @@ func (t *TokenBucket[R]) Next() time.Duration {
 		return math.MaxInt64
 	}
 	return r.Delay()
+}
+
+// ErrRefused reports that a [TokenBucket]'s limiter will never grant a
+// reservation, for example a golang.org/x/time/rate limiter with burst 0.
+var ErrRefused = errors.New("schedule: limiter refused the reservation")
+
+// Wait blocks until the bucket grants one unit of capacity, or ctx is done.
+//
+// When the limiter has its own Wait(context.Context) error method, as
+// *rate.Limiter does, Wait delegates to it: a caller cancelled while waiting
+// hands its token back to reservations made after the cancellation, and a
+// deadline the limiter cannot meet fails at once. Otherwise Wait reserves,
+// sleeps for the reservation's delay, and cancels the reservation, if it has a
+// Cancel method, when ctx ends first.
+//
+// Wait fails closed. It returns ctx's error if ctx is done first, an error
+// matching context.DeadlineExceeded if the limiter reports that the deadline
+// cannot be met, and an error matching [ErrRefused] if the limiter will never
+// grant capacity.
+func (t *TokenBucket[R]) Wait(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if w, ok := t.limiter.(interface{ Wait(context.Context) error }); ok {
+		return waitErr(ctx, t.limiter, w.Wait(ctx))
+	}
+	r := t.limiter.Reserve()
+	if !r.OK() {
+		return ErrRefused
+	}
+	d := r.Delay()
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		if c, ok := any(r).(interface{ Cancel() }); ok {
+			c.Cancel()
+		}
+		return ctx.Err()
+	}
+}
+
+// waitErr classifies an error from a limiter's own Wait. Limiters such as
+// *rate.Limiter report refusals as opaque strings, so a burst of 0 (the only
+// permanent refusal) is told apart from an unmeetable deadline by asking the
+// limiter for its burst.
+func waitErr(ctx context.Context, limiter any, err error) error {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if b, ok := limiter.(interface{ Burst() int }); ok && b.Burst() == 0 {
+		return fmt.Errorf("%w: %w", ErrRefused, err)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return fmt.Errorf("schedule: %w: %w", context.DeadlineExceeded, err)
+	}
+	return fmt.Errorf("%w: %w", ErrRefused, err)
 }

@@ -30,6 +30,42 @@ func (c *countingSchedule) Next() time.Duration {
 	return c.d
 }
 
+// waitingBucket is a Waiter that reserves tokens like schedule.TokenBucket over
+// a golang.org/x/time/rate limiter: Next reserves one token and returns the
+// wait from now until it is available, and Wait reserves one and blocks until
+// then. Unlike the real limiter it never hands a cancelled token back.
+type waitingBucket struct {
+	mu       sync.Mutex
+	interval time.Duration
+	burst    int
+	tat      time.Time // theoretical arrival time of the next token (GCRA)
+	waits    atomic.Int64
+}
+
+func (b *waitingBucket) Next() time.Duration {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	if b.tat.Before(now) {
+		b.tat = now
+	}
+	allowAt := b.tat.Add(-time.Duration(b.burst-1) * b.interval)
+	b.tat = b.tat.Add(b.interval)
+	return max(allowAt.Sub(now), 0)
+}
+
+func (b *waitingBucket) Wait(ctx context.Context) error {
+	b.waits.Add(1)
+	timer := time.NewTimer(b.Next())
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // peakTracker measures the peak number of concurrent goroutines inside fn.
 type peakTracker struct {
 	mu      sync.Mutex
@@ -323,6 +359,96 @@ func TestThrottle_Do(t *testing.T) {
 			// A held slot would leave this call blocked and the bubble deadlocked.
 			assert.NoError(t, th.Do(t.Context(), func(context.Context) error { return nil }))
 		})
+	})
+
+	t.Run("dispatches at a Waiter's rate", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			start := time.Now()
+			bucket := &waitingBucket{interval: time.Second, burst: 3}
+			th := throttle.New(bucket, throttle.WithMaxInflight(throttle.Unbounded))
+
+			var mu sync.Mutex
+			var got []time.Duration
+			var wg sync.WaitGroup
+			for range 8 {
+				wg.Go(func() {
+					_ = th.Do(t.Context(), func(context.Context) error {
+						mu.Lock()
+						got = append(got, time.Since(start))
+						mu.Unlock()
+						return nil
+					})
+				})
+				synctest.Wait() // fix arrival order
+			}
+			wg.Wait()
+
+			s := time.Second
+			assert.Equal(t, []time.Duration{0, 0, 0, 1 * s, 2 * s, 3 * s, 4 * s, 5 * s}, got)
+		})
+	})
+
+	t.Run("returns a Waiter's error without calling fn", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			bucket := &waitingBucket{interval: time.Hour, burst: 1}
+			th := throttle.New(bucket)
+			require.NoError(t, th.Do(t.Context(), func(context.Context) error { return nil })) // drain the burst
+
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			called := false
+			err := th.Do(ctx, func(context.Context) error { called = true; return nil })
+
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.False(t, called)
+		})
+	})
+
+	t.Run("takes the in-flight slot before asking a Waiter", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			start := time.Now()
+			bucket := &waitingBucket{interval: time.Second, burst: 3}
+			th := throttle.New(bucket) // default: one in flight
+
+			// The first call holds the only slot for 10s. Callers queued behind
+			// it must reserve their tokens only once they hold the slot, or
+			// they all fire together when it frees.
+			got := make([]time.Duration, 8)
+			var wg sync.WaitGroup
+			for i := range got {
+				wg.Go(func() {
+					_ = th.Do(t.Context(), func(context.Context) error {
+						got[i] = time.Since(start)
+						if i == 0 {
+							time.Sleep(10 * time.Second)
+						}
+						return nil
+					})
+				})
+				synctest.Wait() // fix arrival order
+			}
+			wg.Wait()
+
+			s := time.Second
+			assert.Equal(t, []time.Duration{0, 10 * s, 10 * s, 10 * s, 11 * s, 12 * s, 13 * s, 14 * s}, got)
+		})
+	})
+
+	t.Run("does not call a Waiter when ctx is already cancelled", func(t *testing.T) {
+		t.Parallel()
+		bucket := &waitingBucket{interval: time.Second, burst: 1}
+		th := throttle.New(bucket)
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		// With a free slot the semaphore select is a coin flip, so repeat.
+		for range 100 {
+			assert.ErrorIs(t, th.Do(ctx, func(context.Context) error { return nil }), context.Canceled)
+		}
+		assert.Zero(t, bucket.waits.Load())
 	})
 }
 
