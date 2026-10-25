@@ -41,7 +41,7 @@ t := throttle.New(s, throttle.WithMaxInflight(throttle.Unbounded))
 
 ### Rate-limited HTTP client
 
-`NewRoundTripper` applies the same pacing to outbound requests, so an entire `http.Client` respects an API's rate limit without touching call sites. It takes the same options as `New`.
+`NewRoundTripper` applies the same pacing to outbound requests, so an entire `http.Client` respects an API's rate limit without touching call sites. It takes the same options as `New`. A request is in flight until its response headers arrive, so `WithMaxInflight` bounds concurrent requests, not concurrent reads of their bodies.
 
 ```go
 rt := throttle.NewRoundTripper(nil, s, throttle.WithMaxInflight(4)) // nil uses http.DefaultTransport
