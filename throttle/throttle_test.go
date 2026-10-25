@@ -450,6 +450,37 @@ func TestThrottle_Do(t *testing.T) {
 		}
 		assert.Zero(t, bucket.waits.Load())
 	})
+
+	tests := []struct {
+		name string
+		opts []throttle.Option
+	}{
+		{name: "default in-flight cap", opts: nil},
+		{name: "unbounded", opts: []throttle.Option{throttle.WithMaxInflight(throttle.Unbounded)}},
+	}
+	for _, tc := range tests {
+		t.Run("does not run fn when ctx is already cancelled with "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+
+			// With a free slot the outcome used to be a coin flip, so repeat
+			// enough times that a lucky pass is out of the question.
+			calls, notCancelled := 0, 0
+			for range 100 {
+				th := throttle.New(constSchedule(0), tc.opts...)
+				err := th.Do(ctx, func(context.Context) error {
+					calls++
+					return nil
+				})
+				if !errors.Is(err, context.Canceled) {
+					notCancelled++
+				}
+			}
+			assert.Zero(t, calls, "fn ran with an already-cancelled ctx")
+			assert.Zero(t, notCancelled, "Do did not return context.Canceled")
+		})
+	}
 }
 
 func TestNew_panicsOnInvalidMaxInflight(t *testing.T) {

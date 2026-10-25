@@ -65,7 +65,7 @@ client := &http.Client{Transport: throttle.NewRoundTripper(nil, s)}
 
 ## Cancellation and cadence
 
-`Do` returns `ctx.Err()` if the context is cancelled while waiting for its slot, either for the paced delay or for an in-flight slot. `RoundTrip` uses `req.Context()`, so a cancelled request stops waiting too.
+`Do` returns `ctx.Err()` if the context is cancelled before or while waiting for its slot, either for the paced delay or for an in-flight slot. `RoundTrip` uses `req.Context()`, so a cancelled request stops waiting too.
 
 Callers first queue for an in-flight slot and take their turn in the cadence once they hold one. A caller cancelled while queued leaves the cadence untouched. A caller cancelled during the paced delay has already taken its turn, and it stays taken, so a run of cancelled callers cannot hand the next caller a free burst. An idle throttle does not accumulate credit either, so a long pause is not followed by a rush of immediate calls.
 
