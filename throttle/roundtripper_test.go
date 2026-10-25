@@ -2,17 +2,31 @@ package throttle_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/throttle"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// closeRecorder is a request body that records whether it was closed.
+type closeRecorder struct {
+	io.Reader
+	closed bool
+}
+
+func (c *closeRecorder) Close() error {
+	c.closed = true
+	return nil
+}
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -156,3 +170,81 @@ func TestRoundTripper_withMaxInflight(t *testing.T) {
 type roundTripperFn func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFn) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestRoundTripper_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	// forwardingTransport closes each forwarded body, as a real transport
+	// does, and counts the requests it receives.
+	forwardingTransport := func(forwarded *atomic.Int64, release <-chan struct{}) http.RoundTripper {
+		return roundTripperFn(func(req *http.Request) (*http.Response, error) {
+			forwarded.Add(1)
+			if req.Body != nil {
+				_ = req.Body.Close()
+			}
+			if release != nil {
+				<-release
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+		})
+	}
+
+	t.Run("closes the request body when cancelled during the paced wait", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			var forwarded atomic.Int64
+			rt := throttle.NewRoundTripper(forwardingTransport(&forwarded, nil), constSchedule(time.Hour))
+
+			// The first request passes immediately and pushes the next slot an hour out.
+			first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.test/", nil)
+			require.NoError(t, err)
+			_, err = rt.RoundTrip(first)
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			body := &closeRecorder{Reader: strings.NewReader("payload")}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.test/", body)
+			require.NoError(t, err)
+
+			_, err = rt.RoundTrip(req)
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.True(t, body.closed, "RoundTrip must close req.Body even when it never forwards the request")
+			assert.Equal(t, int64(1), forwarded.Load(), "only the first request should reach the inner transport")
+		})
+	})
+
+	t.Run("closes the request body when cancelled waiting for an in-flight slot", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			var forwarded atomic.Int64
+			release := make(chan struct{})
+			rt := throttle.NewRoundTripper(forwardingTransport(&forwarded, release), constSchedule(0))
+
+			// The first request holds the only in-flight slot until released.
+			var wg sync.WaitGroup
+			wg.Go(func() {
+				first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.test/", nil)
+				if assert.NoError(t, err) {
+					_, err = rt.RoundTrip(first)
+					assert.NoError(t, err)
+				}
+			})
+			synctest.Wait()
+
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			body := &closeRecorder{Reader: strings.NewReader("payload")}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.test/", body)
+			require.NoError(t, err)
+
+			_, err = rt.RoundTrip(req)
+			close(release)
+			wg.Wait()
+
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.True(t, body.closed, "RoundTrip must close req.Body even when it never forwards the request")
+			assert.Equal(t, int64(1), forwarded.Load(), "only the first request should reach the inner transport")
+		})
+	})
+}

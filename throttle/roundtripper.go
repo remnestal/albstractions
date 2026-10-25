@@ -31,12 +31,22 @@ func NewRoundTripper(next http.RoundTripper, s Schedule, opts ...Option) *RoundT
 }
 
 // RoundTrip implements http.RoundTripper.
+//
+// If req's context ends before the request is forwarded, RoundTrip closes
+// req.Body and returns the context error.
 func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	var resp *http.Response
-	err := rt.t.Do(req.Context(), func(ctx context.Context) error {
+	forwarded := false
+	err := rt.t.Do(req.Context(), func(context.Context) error {
+		forwarded = true
 		var innerErr error
 		resp, innerErr = rt.next.RoundTrip(req)
 		return innerErr
 	})
+	// http.RoundTripper must close the body on every path. Once forwarded, the
+	// inner transport owns it.
+	if !forwarded && req.Body != nil {
+		_ = req.Body.Close()
+	}
 	return resp, err
 }
