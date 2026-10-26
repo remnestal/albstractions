@@ -111,7 +111,7 @@ rt := cache.NewReadThrough[string, User](
 
 A loader error recognised as a miss (`ErrCacheMiss`, or any error registered with `WithMissError`) surfaces as a plain miss, so the caller can create the resource while keeping the cache layer.
 
-Write-through persists to a backing store before updating the front, keeping them consistent. The store is always written first, so the front is never ahead of the store when a write fails. Deletes are opt-in: without `WithDeleter` a delete evicts from the front only and leaves the store untouched.
+Write-through persists to a backing store before updating the front, keeping them consistent: concurrent writes and deletes of the same key through one `WriteThrough` are serialised, so the front ends in the store's order (other writers to the store, and a front that fills itself such as a `ReadThrough`, are not covered). The store is always written first, so the front is never ahead of the store when a write fails. Deletes are opt-in: without `WithDeleter` a delete evicts from the front only and leaves the store untouched.
 
 ```go
 wt := cache.NewWriteThrough[string, User](

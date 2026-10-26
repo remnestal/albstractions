@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"iter"
+	"sync"
 	"time"
 )
 
@@ -36,6 +37,12 @@ func WithDeleter[K comparable, V any](del Deleter[K, V]) WriteThroughOption[K, V
 // WriteThrough is a [Cache] that writes through to a backing store before
 // updating a front cache, keeping the two consistent.
 //
+// Concurrent writes and deletes of the same key through one WriteThrough are
+// serialised, each holding the key across its writer or deleter call and the
+// front update, so the front ends in the same state as the store. This does not cover other writers to the
+// store (other processes or WriteThrough instances), or a front that fills
+// itself, such as a [ReadThrough].
+//
 // [WriteThrough.SetContext] calls the [Writer] first and updates the front only
 // if it succeeds. [WriteThrough.DeleteContext] calls the [Deleter] (if one was
 // configured with [WithDeleter]) first and likewise updates the front only on
@@ -43,11 +50,22 @@ func WithDeleter[K comparable, V any](del Deleter[K, V]) WriteThroughOption[K, V
 // Reads and iteration come from the front; the backing store is never read.
 //
 // WriteThrough is safe for concurrent use when its front, writer, and deleter
-// are.
+// are. The writer, deleter and front must not write or delete through the same
+// WriteThrough for the key they are handling, or that call deadlocks.
 type WriteThrough[K comparable, V any] struct {
 	front   Cache[K, V]
 	writer  Writer[K, V]
 	deleter Deleter[K, V]
+
+	mu    sync.Mutex
+	locks map[K]*keyLock // per-key write locks, removed when unused
+}
+
+// keyLock serialises writes to one key. A one-slot channel rather than a mutex
+// lets a waiter give up when its context ends.
+type keyLock struct {
+	ch   chan struct{}
+	refs int // holders and waiters; the entry is removed at zero
 }
 
 var _ Cache[int, int] = (*WriteThrough[int, int])(nil)
@@ -69,7 +87,7 @@ func NewWriteThrough[K comparable, V any](front Cache[K, V], write Writer[K, V],
 	for _, o := range opts {
 		o(&cfg)
 	}
-	return &WriteThrough[K, V]{front: front, writer: write, deleter: cfg.deleter}
+	return &WriteThrough[K, V]{front: front, writer: write, deleter: cfg.deleter, locks: make(map[K]*keyLock)}
 }
 
 // Get implements [Cache.Get]. It reads from the front cache.
@@ -101,7 +119,15 @@ func (w *WriteThrough[K, V]) GetContext(ctx context.Context, key K) (V, bool, er
 
 // SetContext implements [Cache.SetContext], writing to the backing store before
 // the front cache and leaving the front untouched if the write fails.
+//
+// It first waits for any other write or delete of key through w to finish. If
+// ctx ends while waiting, it returns [context.Cause] of ctx without writing.
 func (w *WriteThrough[K, V]) SetContext(ctx context.Context, key K, val V, exp Expiry) (time.Time, error) {
+	l, err := w.lock(ctx, key)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer w.unlock(key, l)
 	if err := w.writer(ctx, key, val); err != nil {
 		return time.Time{}, err
 	}
@@ -111,7 +137,15 @@ func (w *WriteThrough[K, V]) SetContext(ctx context.Context, key K, val V, exp E
 // DeleteContext implements [Cache.DeleteContext], deleting from the backing
 // store (when a deleter is configured) before the front cache and leaving the
 // front untouched if the backing delete fails.
+//
+// It first waits for any other write or delete of key through w to finish. If
+// ctx ends while waiting, it returns [context.Cause] of ctx without deleting.
 func (w *WriteThrough[K, V]) DeleteContext(ctx context.Context, key K) error {
+	l, err := w.lock(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer w.unlock(key, l)
 	if w.deleter != nil {
 		if err := w.deleter(ctx, key); err != nil {
 			return err
@@ -139,4 +173,53 @@ func (w *WriteThrough[K, V]) Close() error {
 		return c.Close()
 	}
 	return nil
+}
+
+// lock waits for exclusive use of key among w's writes and deletes, returning
+// [context.Cause] of ctx if it ends first.
+func (w *WriteThrough[K, V]) lock(ctx context.Context, key K) (*keyLock, error) {
+	if key != key { // NaN never matches a map key, so it would leak an entry
+		return nil, nil
+	}
+	w.mu.Lock()
+	l := w.locks[key]
+	if l == nil {
+		l = &keyLock{ch: make(chan struct{}, 1)}
+		w.locks[key] = l
+	}
+	l.refs++
+	w.mu.Unlock()
+
+	// Uncontended calls take the lock without a select, so an already-done ctx
+	// reaches the writer exactly as before.
+	select {
+	case l.ch <- struct{}{}:
+		return l, nil
+	default:
+	}
+	select {
+	case l.ch <- struct{}{}:
+		return l, nil
+	case <-ctx.Done():
+		w.release(key, l)
+		return nil, context.Cause(ctx)
+	}
+}
+
+// unlock releases a lock taken by lock.
+func (w *WriteThrough[K, V]) unlock(key K, l *keyLock) {
+	if l == nil {
+		return
+	}
+	<-l.ch
+	w.release(key, l)
+}
+
+// release drops one reference to l, removing it from w.locks when unused.
+func (w *WriteThrough[K, V]) release(key K, l *keyLock) {
+	w.mu.Lock()
+	if l.refs--; l.refs == 0 {
+		delete(w.locks, key)
+	}
+	w.mu.Unlock()
 }

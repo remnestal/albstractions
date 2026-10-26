@@ -3,8 +3,10 @@ package cache_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/cache"
@@ -59,6 +61,94 @@ func TestWriteThrough_SetContext(t *testing.T) {
 		assert.ErrorIs(t, err, boom)
 		_, ok := front.Get("k")
 		assert.False(t, ok)
+	})
+
+	t.Run("concurrent writes to one key leave the front matching the store", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			var mu sync.Mutex
+			store := map[string]int{}
+			writer := func(_ context.Context, k string, v int) error {
+				mu.Lock()
+				store[k] = v
+				mu.Unlock()
+				if v == 1 {
+					time.Sleep(time.Second) // the first write stalls after reaching the store
+				}
+				return nil
+			}
+			front := cache.NewMemory[string, int]()
+			wt := cache.NewWriteThrough[string, int](front, writer)
+
+			var wg sync.WaitGroup
+			wg.Go(func() { _, _ = wt.SetContext(t.Context(), "k", 1, cache.Never) })
+			synctest.Wait() // the first write has reached the store and is stalled
+
+			_, _ = wt.SetContext(t.Context(), "k", 2, cache.Never)
+			wg.Wait()
+
+			got, _ := front.Get("k")
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, store["k"], got, "front diverged from the backing store")
+		})
+	})
+
+	t.Run("returns the context cause when it ends while waiting for a write to the same key", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			var mu sync.Mutex
+			var calls []int
+			writer := func(_ context.Context, _ string, v int) error {
+				mu.Lock()
+				calls = append(calls, v)
+				mu.Unlock()
+				time.Sleep(2 * time.Second)
+				return nil
+			}
+			front := cache.NewMemory[string, int]()
+			wt := cache.NewWriteThrough[string, int](front, writer)
+
+			var wg sync.WaitGroup
+			wg.Go(func() { _, _ = wt.SetContext(t.Context(), "k", 1, cache.Never) })
+			synctest.Wait() // the first write holds the key
+
+			cause := errors.New("gave up")
+			ctx, cancel := context.WithTimeoutCause(t.Context(), time.Second, cause)
+			defer cancel()
+			_, err := wt.SetContext(ctx, "k", 2, cache.Never)
+			wg.Wait()
+
+			assert.ErrorIs(t, err, cause)
+			got, _ := front.Get("k")
+			assert.Equal(t, 1, got)
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, []int{1}, calls, "the waiting write must not reach the store")
+		})
+	})
+
+	t.Run("writes to different keys do not wait for each other", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			writer := func(_ context.Context, k string, _ int) error {
+				if k == "slow" {
+					time.Sleep(time.Hour)
+				}
+				return nil
+			}
+			wt := cache.NewWriteThrough[string, int](cache.NewMemory[string, int](), writer)
+
+			var wg sync.WaitGroup
+			defer wg.Wait()
+			wg.Go(func() { _, _ = wt.SetContext(t.Context(), "slow", 1, cache.Never) })
+			synctest.Wait()
+
+			start := time.Now()
+			_, err := wt.SetContext(t.Context(), "fast", 1, cache.Never)
+			require.NoError(t, err)
+			assert.Zero(t, time.Since(start))
+		})
 	})
 }
 
@@ -147,6 +237,42 @@ func TestWriteThrough_DeleteContext(t *testing.T) {
 		require.NoError(t, wt.DeleteContext(context.Background(), "k"))
 		_, ok := front.Get("k")
 		assert.False(t, ok)
+	})
+
+	t.Run("a delete racing a write leaves the front matching the store", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			var mu sync.Mutex
+			store := map[string]int{}
+			writer := func(_ context.Context, k string, v int) error {
+				mu.Lock()
+				store[k] = v
+				mu.Unlock()
+				time.Sleep(time.Second) // stall after reaching the store
+				return nil
+			}
+			deleter := func(_ context.Context, k string) error {
+				mu.Lock()
+				delete(store, k)
+				mu.Unlock()
+				return nil
+			}
+			front := cache.NewMemory[string, int]()
+			wt := cache.NewWriteThrough[string, int](front, writer, cache.WithDeleter[string, int](deleter))
+
+			var wg sync.WaitGroup
+			wg.Go(func() { _, _ = wt.SetContext(t.Context(), "k", 1, cache.Never) })
+			synctest.Wait()
+			require.NoError(t, wt.DeleteContext(t.Context(), "k"))
+			wg.Wait()
+
+			_, inFront := front.Get("k")
+			mu.Lock()
+			_, inStore := store["k"]
+			mu.Unlock()
+			assert.False(t, inStore)
+			assert.False(t, inFront, "front diverged from the backing store")
+		})
 	})
 }
 
