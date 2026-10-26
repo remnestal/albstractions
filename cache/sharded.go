@@ -117,13 +117,14 @@ func (s *Sharded[K, V]) Items() iter.Seq2[K, V] {
 //
 // It visits the backends in order, locking only one at a time, so a large cache
 // stays available to writers throughout the scan. It stops at the first backend
-// that reports an error or when ctx is cancelled, and the terminal accessor
-// returns that error.
+// that reports an error or when ctx is done, and the terminal accessor returns
+// that error, or [context.Cause] of ctx.
 func (s *Sharded[K, V]) ItemsContext(ctx context.Context) (iter.Seq2[K, V], func() error) {
 	var err error
 	seq := func(yield func(K, V) bool) {
 		for _, shard := range s.shards {
-			if err = ctx.Err(); err != nil {
+			if ctx.Err() != nil {
+				err = context.Cause(ctx)
 				return
 			}
 			sub, errf := shard.ItemsContext(ctx)

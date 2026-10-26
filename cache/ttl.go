@@ -39,8 +39,12 @@ func After(d time.Duration) Expiry {
 // At returns an [Expiry] that expires the entry at the given absolute time.
 //
 // The implied lifetime (t minus the moment of the set) is clamped to the bounds
-// set by [WithMinTTL] and [WithMaxTTL]. A t at or before the set expires the
-// entry immediately, subject to [WithMinTTL].
+// set by [WithMinTTL] and [WithMaxTTL]. A non-zero t at or before the set
+// expires the entry immediately, subject to [WithMinTTL].
+//
+// The zero time means [Never], the same encoding [Cache.Set] returns for an
+// entry that never expires, so passing a returned expiry back to At re-applies
+// it rather than expiring the entry.
 func At(t time.Time) Expiry {
 	return Expiry{kind: expiryAt, at: t}
 }
@@ -125,7 +129,16 @@ func (c *memoryConfig) resolveExpiry(exp Expiry, now, existing time.Time, found 
 	case expiryNever:
 		return c.clampNever(now)
 	case expiryAt:
-		return c.clampLifetime(now, exp.at.Sub(now))
+		if exp.at.IsZero() {
+			return c.clampNever(now)
+		}
+		life := exp.at.Sub(now)
+		if c.maxTTL == 0 && now.Add(life).Before(exp.at) {
+			// Sub saturates about 292 years out; with no ceiling to clamp to,
+			// the requested time is the answer.
+			return exp.at
+		}
+		return c.clampLifetime(now, life)
 	default: // expiryAfter
 		return c.clampLifetime(now, exp.dur)
 	}

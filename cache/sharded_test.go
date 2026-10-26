@@ -175,6 +175,19 @@ func TestSharded_Items(t *testing.T) {
 func TestSharded_ItemsContext(t *testing.T) {
 	t.Parallel()
 
+	t.Run("reports the cause of a cancelled context", func(t *testing.T) {
+		t.Parallel()
+		errShutdown := errors.New("shutting down")
+		s := cache.NewSharded[int, int](4, cache.HashShard[int](), memoryShards[int, int]())
+		s.Set(1, 1, cache.Never)
+		ctx, cancel := context.WithCancelCause(t.Context())
+		cancel(errShutdown)
+		seq, errf := s.ItemsContext(ctx)
+		for range seq {
+		}
+		assert.ErrorIs(t, errf(), errShutdown)
+	})
+
 	t.Run("unions live entries with no error", func(t *testing.T) {
 		t.Parallel()
 		s := cache.NewSharded[int, int](4, cache.HashShard[int](), memoryShards[int, int]())

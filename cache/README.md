@@ -58,7 +58,7 @@ if v, ok := c.Get("token"); ok {
 | Expiry | Meaning |
 |--------|---------|
 | `After(d)` | expire `d` after the set, clamped to the configured bounds |
-| `At(t)` | expire at the absolute time `t`; a past `t` expires immediately |
+| `At(t)` | expire at the absolute time `t`, clamped to the configured bounds like `After`; a past `t` expires immediately unless `WithMinTTL` sets a floor, and the zero `t` means `Never`, so a time returned by `Set` can be passed back |
 | `Never` | never expire |
 | `Default` | use the duration from `WithDefaultTTL`, or `Never` if none is set |
 | `Keep` | replace the value, keep the existing expiry (or `Default` if the key is absent) |
@@ -125,7 +125,9 @@ Stack them into tiers. `LoaderFromCache` turns a lower cache into a read-through
 
 ```go
 l2 := cache.NewReadThrough[string, User](cache.NewMemory[string, User](), loadFromDB)
+defer l2.Close() // l1 does not own l2, so close it too
 l1 := cache.NewReadThrough[string, User](cache.NewMemory[string, User](), cache.LoaderFromCache[string, User](l2))
+defer l1.Close()
 ```
 
 ## Iteration
@@ -154,7 +156,7 @@ if err := errf(); err != nil {
 
 ## Lifecycle and concurrency
 
-All caches are safe for concurrent use. A `Memory` with `WithCleanupInterval` or `WithRebuildInterval` runs background goroutines; call `Close` to stop them. Closing a wrapper or a `Sharded` cascades to the caches beneath it, so closing the outermost layer of a stack is enough.
+All caches are safe for concurrent use. A `Memory` with `WithCleanupInterval` or `WithRebuildInterval` runs background goroutines; call `Close` to stop them. Closing a wrapper or a `Sharded` cascades to the caches beneath it, so closing the outermost layer of a stack is enough. A cache behind `LoaderFromCache` is not beneath the wrapper, only reachable through its loader, so close it separately.
 
 Values are stored by assignment. If `V` is a reference type such as a slice, map, or pointer, the cache and its callers share the underlying data, so do not mutate a retrieved value without synchronisation, or store a copy.
 

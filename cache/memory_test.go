@@ -236,6 +236,47 @@ func TestMemory_ItemsContext(t *testing.T) {
 		assert.Zero(t, n)
 		assert.ErrorIs(t, errf(), context.Canceled)
 	})
+
+	t.Run("reports the cause of a cancelled context", func(t *testing.T) {
+		t.Parallel()
+		c := cache.NewMemory[int, int]()
+		c.Set(1, 1, cache.Never)
+		// Any cause distinct from context.Canceled tells Cause apart from Err.
+		ctx, cancel := context.WithCancelCause(t.Context())
+		cancel(context.DeadlineExceeded)
+		seq, errf := c.ItemsContext(ctx)
+		for range seq {
+		}
+		assert.ErrorIs(t, errf(), context.DeadlineExceeded)
+	})
+
+	t.Run("a context cancelled mid-iteration stops it and reports the cause", func(t *testing.T) {
+		t.Parallel()
+		c := cache.NewMemory[int, int]()
+		c.Set(1, 1, cache.Never)
+		c.Set(2, 2, cache.Never)
+		ctx, cancel := context.WithCancelCause(t.Context())
+		defer cancel(nil)
+		seq, errf := c.ItemsContext(ctx)
+		n := 0
+		for range seq {
+			n++
+			cancel(context.DeadlineExceeded)
+		}
+		assert.Equal(t, 1, n)
+		assert.ErrorIs(t, errf(), context.DeadlineExceeded)
+	})
+
+	t.Run("an empty cache reports a context that is already done", func(t *testing.T) {
+		t.Parallel()
+		c := cache.NewMemory[int, int]()
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		seq, errf := c.ItemsContext(ctx)
+		for range seq {
+		}
+		assert.ErrorIs(t, errf(), context.Canceled)
+	})
 }
 
 func TestMemory_GetContext(t *testing.T) {

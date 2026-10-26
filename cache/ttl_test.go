@@ -2,6 +2,7 @@ package cache_test
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/cache"
@@ -73,5 +74,90 @@ func TestWithMaxTTL(t *testing.T) {
 		exp := c.Set("k", 1, cache.Never)
 		assert.False(t, exp.IsZero())
 		assert.WithinDuration(t, time.Now().Add(time.Hour), exp, time.Second)
+	})
+}
+
+func TestAfter(t *testing.T) {
+	t.Parallel()
+
+	t.Run("zero expires the entry at the instant it is set", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			c.Set("k", 1, cache.After(0))
+			_, ok := c.Get("k")
+			assert.False(t, ok)
+		})
+	})
+
+	t.Run("the entry is live until exactly its expiry", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			c.Set("k", 1, cache.After(time.Second))
+
+			time.Sleep(time.Second - time.Nanosecond)
+			_, ok := c.Get("k")
+			assert.True(t, ok, "live a nanosecond before its expiry")
+
+			time.Sleep(time.Nanosecond)
+			_, ok = c.Get("k")
+			assert.False(t, ok, "gone at its expiry")
+		})
+	})
+}
+
+func TestAt(t *testing.T) {
+	t.Parallel()
+
+	t.Run("now expires the entry at the instant it is set", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			c.Set("k", 1, cache.At(time.Now()))
+			_, ok := c.Get("k")
+			assert.False(t, ok)
+		})
+	})
+
+	t.Run("the zero time never expires, so a returned expiry round-trips", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			never := c.Set("a", 1, cache.Never)
+			exp := c.Set("b", 2, cache.At(never))
+			assert.True(t, exp.IsZero(), "got %v", exp)
+
+			time.Sleep(1000 * time.Hour)
+			_, ok := c.Get("b")
+			assert.True(t, ok)
+		})
+	})
+
+	t.Run("the zero time is capped by the maximum like Never", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int](cache.WithMaxTTL(time.Hour))
+			exp := c.Set("k", 1, cache.At(time.Time{}))
+			assert.Equal(t, time.Now().Add(time.Hour), exp)
+		})
+	})
+
+	t.Run("a time beyond the Duration range is kept exactly", func(t *testing.T) {
+		t.Parallel()
+		far := time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC)
+		c := cache.NewMemory[string, int]()
+		exp := c.Set("k", 1, cache.At(far))
+		assert.Equal(t, far, exp)
+	})
+
+	t.Run("a time beyond the Duration range is still capped by the maximum", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			far := time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC)
+			c := cache.NewMemory[string, int](cache.WithMaxTTL(time.Hour))
+			exp := c.Set("k", 1, cache.At(far))
+			assert.Equal(t, time.Now().Add(time.Hour), exp)
+		})
 	})
 }

@@ -167,7 +167,9 @@ func (w *WriteThrough[K, V]) ItemsContext(ctx context.Context) (iter.Seq2[K, V],
 // Close closes the front cache if it implements io.Closer.
 //
 // Closing a wrapper closes the layer beneath it, so closing the outermost cache
-// in a stack stops the background maintenance of every [Memory] within it.
+// in a stack stops the background maintenance of every [Memory] within it. A
+// cache reachable only through a loader, such as one passed to
+// [LoaderFromCache], is not part of the stack and must be closed separately.
 func (w *WriteThrough[K, V]) Close() error {
 	if c, ok := w.front.(io.Closer); ok {
 		return c.Close()

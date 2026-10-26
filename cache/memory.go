@@ -26,6 +26,8 @@ type entry[V any] struct {
 // pointer) the cache and its callers share the underlying data, so a retrieved
 // value must not be mutated without external synchronisation.
 //
+// Create a Memory with [NewMemory]; the zero value is not usable.
+//
 // Memory is safe for concurrent use.
 type Memory[K comparable, V any] struct {
 	cfg       memoryConfig
@@ -110,11 +112,17 @@ func (m *Memory[K, V]) Items() iter.Seq2[K, V] {
 //
 // It snapshots the live entries under a read lock when iteration begins, then
 // yields from the snapshot with no lock held, so the loop body may safely call
-// back into the cache. The terminal error is non-nil only when ctx is cancelled
-// during iteration.
+// back into the cache. The terminal error is non-nil only when ctx is done
+// before or during iteration, and is then [context.Cause] of ctx.
 func (m *Memory[K, V]) ItemsContext(ctx context.Context) (iter.Seq2[K, V], func() error) {
 	var err error
 	seq := func(yield func(K, V) bool) {
+		// Check before the snapshot too, so an empty cache still reports a dead
+		// ctx and a dead ctx never copies the map under the lock.
+		if ctx.Err() != nil {
+			err = context.Cause(ctx)
+			return
+		}
 		now := time.Now()
 		m.mu.RLock()
 		keys := make([]K, 0, len(m.m))
@@ -128,7 +136,8 @@ func (m *Memory[K, V]) ItemsContext(ctx context.Context) (iter.Seq2[K, V], func(
 		m.mu.RUnlock()
 
 		for i := range keys {
-			if err = ctx.Err(); err != nil {
+			if ctx.Err() != nil {
+				err = context.Cause(ctx)
 				return
 			}
 			if !yield(keys[i], vals[i]) {
@@ -226,8 +235,10 @@ func (m *Memory[K, V]) rebuild() {
 	m.m = fresh
 }
 
-// expired reports whether an entry with the given expiry is expired at now. A
-// zero expiry never expires.
+// expired reports whether an entry with the given expiry is expired at now. An
+// entry expires at the instant of its expiry, so one set with After(0) or
+// At(now) is already gone at the moment it was set. A zero expiry never
+// expires.
 func expired(expiresAt, now time.Time) bool {
-	return !expiresAt.IsZero() && now.After(expiresAt)
+	return !expiresAt.IsZero() && !now.Before(expiresAt)
 }
