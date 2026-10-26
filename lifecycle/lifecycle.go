@@ -180,12 +180,10 @@ func (g *Group) Defer(timeout time.Duration, fn func(ctx context.Context)) {
 // regardless of registration order. http.ErrServerClosed is swallowed — it is
 // the expected return value once server.Shutdown is called.
 func (g *Group) Serve(name string, server *http.Server) {
-	g.requireNamed("http server", name, func(_ context.Context) error {
-		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-		return nil
-	})
+	// The teardown goes first: once registered, it is in any later shutdown,
+	// so the goroutine is never left running without it. If shutdown wins the
+	// race in between, the goroutine is dropped and the teardown shuts down a
+	// server that never started, which is harmless.
 	g.mu.Lock()
 	if !g.stopped {
 		g.serverTeardowns = append(g.serverTeardowns, func(ctx context.Context) {
@@ -193,6 +191,12 @@ func (g *Group) Serve(name string, server *http.Server) {
 		})
 	}
 	g.mu.Unlock()
+	g.requireNamed("http server", name, func(_ context.Context) error {
+		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	})
 }
 
 // Shutdown triggers graceful shutdown.
