@@ -19,8 +19,10 @@ type memoryConfig struct {
 // WithCleanupInterval runs a background janitor that evicts expired entries on
 // the given interval.
 //
-// A zero interval (the default) disables the janitor, leaving expiry to lazy
-// eviction on read.
+// A zero interval (the default) disables the janitor. Expired entries are then
+// removed only when their key is read (or by [WithRebuildInterval]); an expired
+// key that is never read again stays in memory, so a keyspace with many
+// short-lived keys needs a janitor.
 //
 // Panics if d is negative.
 func WithCleanupInterval(d time.Duration) MemoryOption {

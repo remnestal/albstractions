@@ -71,7 +71,7 @@ if v, ok := c.Get("token"); ok {
 |--------|--------|
 | `WithDefaultTTL(d)` | Lifetime applied by the `Default` expiry. Unset means `Never` |
 | `WithMinTTL(d)` / `WithMaxTTL(d)` | Clamp every resolved lifetime into `[min, max]` |
-| `WithCleanupInterval(d)` | Background goroutine that evicts expired entries. Without it, expiry is lazy and applied on read |
+| `WithCleanupInterval(d)` | Background goroutine that evicts expired entries. Without it, an expired entry is removed only when its key is read (or by `WithRebuildInterval`), so keys that are never read again are retained; churny keyspaces need it |
 | `WithRebuildInterval(d)` | Background goroutine that rebuilds the backing map. Go never shrinks a map's bucket array, so a cache that has churned through many keys keeps that memory until the map is replaced |
 
 Both intervals start goroutines, so a cache configured with either must be closed. Tying `Close` to the lifetime of whatever scope owns the cache is the safe habit regardless, since it also cascades through a wrapper stack.
