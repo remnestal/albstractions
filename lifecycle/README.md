@@ -110,8 +110,8 @@ To fold the group into an existing context tree, pass `WithContext`. Cancelling 
 
 ## Shutdown semantics
 
-Teardown runs in a fixed order. Every HTTP server registered with `Serve` is drained first, all of them concurrently, then the `Defer` callbacks run sequentially in registration order. Registering a callback after `Serve` does not change this; servers always drain first.
+Teardown runs in a fixed order. Every HTTP server registered with `Serve` is drained first, all of them concurrently, then the `Defer` callbacks run sequentially in registration order. Registering a callback after `Serve` does not change this; servers always drain first. `Run` waits for `Require` goroutines only after the callbacks, so a callback must not close a resource such a goroutine may still be using.
 
-Each `Defer` callback gets its own deadline, but all of teardown shares the single graceful budget. Once that budget expires the remaining callbacks are skipped and `Run` returns without waiting for stragglers. A server still busy when the budget expires is force-closed, so its listener never outlives `Run`, and the failed drain is reported.
+Each `Defer` callback gets its own deadline, but all of teardown shares the single graceful budget. Once that budget expires the remaining callbacks are skipped and `Run` returns without waiting for stragglers. A server still busy when the budget expires is force-closed, so its listener never outlives `Run`, and the failed drain is reported. The budget is cooperative: a `Defer` callback that ignores its context holds `Run` until it returns.
 
 `Run` returns the goroutine errors and any failed server drains joined with `errors.Join`. A goroutine that returns `context.Canceled` or `context.DeadlineExceeded` after shutdown has begun does not contribute, since a clean stop is not a failure. The same error returned while the group is still running, such as a worker's own timeout, is a failure and is collected like any other. A drain cut short does contribute, as an error naming the server and wrapping `context.DeadlineExceeded`, so that error alone does not mean a clean stop.

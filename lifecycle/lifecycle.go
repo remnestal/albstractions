@@ -125,6 +125,9 @@ func WithSignals(sigs ...os.Signal) Option {
 // be invoked concurrently if multiple goroutines fail simultaneously — it
 // must be safe for concurrent use.
 //
+// The callback runs before the error triggers shutdown, so a slow callback
+// delays shutdown.
+//
 // Errors from HTTP servers that fail to drain during teardown are not passed
 // to the callback; they appear only in [Group.Run]'s returned error.
 func WithErrorHandler(fn func(error)) Option {
