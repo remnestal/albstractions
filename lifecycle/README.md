@@ -28,12 +28,15 @@ g := lifecycle.New(
 
 // A required goroutine. Returning an error, or returning nil before the
 // group's context is cancelled, triggers shutdown of the whole group.
+// It closes what it uses itself: Run waits for it only after the Defer
+// callbacks below, so it may still be finishing a job when they run.
 g.Require("worker", func(ctx context.Context) error {
+    defer consumer.Close()
     for {
         select {
         case <-ctx.Done():
             return nil
-        case job := <-queue:
+        case job := <-consumer.Jobs():
             process(job)
         }
     }
@@ -42,7 +45,8 @@ g.Require("worker", func(ctx context.Context) error {
 // Attach an HTTP server: started as a goroutine, drained during teardown.
 g.Serve("api", &http.Server{Addr: ":8080", Handler: mux})
 
-// Teardown callbacks run in registration order, each with its own deadline.
+// Teardown callbacks run in registration order, each with its own deadline,
+// once every server has drained, so mux's handlers are done with db.
 g.Defer(5*time.Second, func(ctx context.Context) {
     db.Close()
 })
@@ -79,16 +83,16 @@ if err := g.Run(); err != nil {
 }
 ```
 
-To fold the group into an existing context tree, pass `WithContext`. Cancelling the parent triggers shutdown and its error becomes the cause. `g.Context()` is the group's own context, valid before `Run` and cancelled when shutdown begins.
+To fold the group into an existing context tree, pass `WithContext`. Cancelling the parent triggers shutdown, and its `context.Cause` becomes the shutdown cause, so a cause passed to a `context.CancelCauseFunc` survives. The parent's values, such as trace IDs or loggers, reach `g.Context()` and every goroutine. Its deadline does not: `g.Context()` is the group's own context, valid before `Run` and cancelled only when shutdown begins.
 
 ## Options
 
 | Option | Effect |
 |--------|--------|
-| `WithGracefulTimeout(d)` | Total budget for the whole teardown: server drain, callbacks, and goroutine exit combined. Default 30s |
+| `WithGracefulTimeout(d)` | Total budget for the whole teardown: server drain, callbacks, and goroutine exit combined. It holds only if `Defer` callbacks return once their context is done, since a running callback cannot be interrupted. Default 30s |
 | `WithSignals(sigs...)` | OS signals that trigger shutdown. None by default |
-| `WithContext(ctx)` | Parent context whose cancellation triggers shutdown and becomes the cause |
-| `WithErrorHandler(fn)` | Called for each goroutine error as it is collected. May be called concurrently |
+| `WithContext(ctx)` | Parent context whose cancellation triggers shutdown and whose `context.Cause` becomes the cause. Its values reach every goroutine |
+| `WithErrorHandler(fn)` | Called with each goroutine error that `Run` will return, before that error triggers shutdown, so a slow handler delays shutdown. A goroutine stopping with a context error once shutdown has begun is a clean stop and is not passed to it. May be called concurrently |
 
 ## Group API
 
@@ -96,7 +100,7 @@ To fold the group into an existing context tree, pass `WithContext`. Cancelling 
 |--------|---------|
 | `Require(name, fn)` | Supervised goroutine. The name identifies it in `ShutdownCause` |
 | `Serve(name, server)` | Runs `ListenAndServe` and registers the server's drain |
-| `Defer(timeout, fn)` | Teardown callback with its own deadline |
+| `Defer(timeout, fn)` | Teardown callback with its own deadline. Runs after servers drain but before `Run` waits for `Require` goroutines |
 | `Run() error` | Starts everything, blocks until shutdown completes. Idempotent |
 | `Shutdown()` | Triggers shutdown. Idempotent, and leaves `ShutdownCause` nil |
 | `Ready() <-chan struct{}` | Closed once pre-`Run` goroutines are spawned and signal handlers installed |
@@ -106,8 +110,8 @@ To fold the group into an existing context tree, pass `WithContext`. Cancelling 
 
 ## Shutdown semantics
 
-Teardown runs in a fixed order. Every HTTP server registered with `Serve` is drained first, all of them concurrently, then the `Defer` callbacks run sequentially in registration order. Registering a callback after `Serve` does not change this; servers always drain first.
+Teardown runs in a fixed order. Every HTTP server registered with `Serve` is drained first, all of them concurrently, then the `Defer` callbacks run sequentially in registration order. Registering a callback after `Serve` does not change this; servers always drain first. `Run` waits for `Require` goroutines only after the callbacks, so a callback must not close a resource such a goroutine may still be using.
 
-Each `Defer` callback gets its own deadline, but all of teardown shares the single graceful budget. Once that budget expires the remaining callbacks are skipped and `Run` returns without waiting for stragglers. A server still busy when the budget expires is force-closed, so its listener never outlives `Run`, and the failed drain is reported.
+Each `Defer` callback gets its own deadline, but all of teardown shares the single graceful budget. Once that budget expires the remaining callbacks are skipped and `Run` returns without waiting for stragglers. A server still busy when the budget expires is force-closed, so its listener never outlives `Run`, and the failed drain is reported. The budget is cooperative: a `Defer` callback that ignores its context holds `Run` until it returns.
 
 `Run` returns the goroutine errors and any failed server drains joined with `errors.Join`. A goroutine that returns `context.Canceled` or `context.DeadlineExceeded` after shutdown has begun does not contribute, since a clean stop is not a failure. The same error returned while the group is still running, such as a worker's own timeout, is a failure and is collected like any other. A drain cut short does contribute, as an error naming the server and wrapping `context.DeadlineExceeded`, so that error alone does not mean a clean stop.

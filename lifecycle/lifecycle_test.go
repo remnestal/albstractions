@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/lifecycle"
@@ -141,6 +142,31 @@ func TestRequire(t *testing.T) {
 		assert.NoError(t, g.Run())
 	})
 
+	t.Run("no-op when Shutdown precedes Run", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			early := make(chan error, 1)
+			g.Require("early", func(ctx context.Context) error {
+				early <- ctx.Err()
+				return nil
+			})
+			g.Shutdown()
+			var lateRan atomic.Bool
+			g.Require("late", func(context.Context) error { lateRan.Store(true); return nil })
+
+			require.NoError(t, g.Run())
+			synctest.Wait() // a wrongly started goroutine has now run
+			assert.False(t, lateRan.Load(), "goroutine registered after Shutdown ran")
+			select {
+			case err := <-early:
+				assert.ErrorIs(t, err, context.Canceled, "registered before Shutdown, so started with a cancelled context")
+			default:
+				t.Fatal("goroutine registered before Shutdown did not run")
+			}
+		})
+	})
+
 	t.Run("no-op after shutdown completes", func(t *testing.T) {
 		t.Parallel()
 		g := lifecycle.New()
@@ -194,6 +220,21 @@ func TestDefer(t *testing.T) {
 			g.Defer(time.Second, func(_ context.Context) { called.Store(true) })
 		})
 		assert.False(t, called.Load())
+	})
+
+	t.Run("no-op when Shutdown precedes Run", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			var early, late atomic.Bool
+			g.Defer(time.Second, func(context.Context) { early.Store(true) })
+			g.Shutdown()
+			g.Defer(time.Second, func(context.Context) { late.Store(true) })
+
+			require.NoError(t, g.Run())
+			assert.True(t, early.Load(), "callback registered before Shutdown did not run")
+			assert.False(t, late.Load(), "callback registered after Shutdown ran")
+		})
 	})
 
 	t.Run("panics on zero timeout", func(t *testing.T) {
@@ -527,6 +568,37 @@ func TestRun(t *testing.T) {
 		assert.Equal(t, int32(1), teardownCount.Load(), "teardown must run exactly once")
 	})
 
+	t.Run("a panicking Defer callback does not block other callers", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Defer(time.Second, func(context.Context) { panic("teardown failed") })
+			g.Shutdown()
+
+			recovered := make(chan any, 1)
+			go func() {
+				defer func() { recovered <- recover() }()
+				_ = g.Run()
+			}()
+			require.Equal(t, "teardown failed", <-recovered, "the panic reaches the first caller")
+
+			second := make(chan error, 1)
+			go func() { second <- g.Run() }()
+			synctest.Wait()
+			select {
+			case err := <-second:
+				assert.NoError(t, err)
+			default:
+				t.Fatal("a later Run call is blocked")
+			}
+			select {
+			case <-g.Done():
+			default:
+				t.Fatal("Done was not closed")
+			}
+		})
+	})
+
 	t.Run("concurrent registration and shutdown without data races", func(t *testing.T) {
 		t.Parallel()
 		g := lifecycle.New(lifecycle.WithGracefulTimeout(100 * time.Millisecond))
@@ -746,6 +818,51 @@ func TestWithContext(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("Run did not return after parent context was cancelled")
 		}
+	})
+
+	t.Run("goroutines see the parent's values", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			type key struct{}
+			parent := context.WithValue(t.Context(), key{}, "trace-id")
+			g := lifecycle.New(lifecycle.WithContext(parent))
+			assert.Equal(t, "trace-id", g.Context().Value(key{}), "group context before Run")
+
+			seen := make(chan any, 1)
+			g.Require("reader", func(ctx context.Context) error {
+				seen <- ctx.Value(key{})
+				<-ctx.Done()
+				return nil
+			})
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+
+			require.NoError(t, g.Run())
+			assert.Equal(t, "trace-id", <-seen, "goroutine context")
+		})
+	})
+
+	t.Run("cause is the parent's cancellation cause", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			sentinel := errors.New("rollback")
+			parent, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+
+			g := lifecycle.New(lifecycle.WithContext(parent))
+			// The cause must already be recorded when goroutines see the
+			// group's context cancelled.
+			atCancel := make(chan error, 1)
+			g.Require("waiting", func(ctx context.Context) error {
+				<-ctx.Done()
+				atCancel <- g.ShutdownCause()
+				return nil
+			})
+			go func() { time.Sleep(10 * time.Millisecond); cancel(sentinel) }()
+
+			require.NoError(t, g.Run())
+			require.ErrorIs(t, g.ShutdownCause(), sentinel)
+			assert.ErrorIs(t, <-atCancel, sentinel, "cause seen by a goroutine woken by the cancellation")
+		})
 	})
 
 	t.Run("cause is parent context error", func(t *testing.T) {
