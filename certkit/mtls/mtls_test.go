@@ -4,6 +4,7 @@ import (
 	"crypto/mldsa"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +18,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// generateTestCA returns a CA that always has the same subject. That is
+// deliberate: in TLS 1.3 a client offers its certificate only when its issuer
+// matches a CA the server lists, so a rogue CA with the same name makes the
+// client offer a certificate the server then rejects on its signature,
+// exercising "unknown certificate authority" rather than "certificate
+// required". It also models a forged CA that copies a real CA's name.
 func generateTestCA(t *testing.T) pki.Bundle {
 	t.Helper()
 	bundle, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", 48*time.Hour)
@@ -335,10 +342,10 @@ func TestMTLSIntegration(t *testing.T) {
 
 		c := &http.Client{
 			Transport: &http.Transport{TLSClientConfig: clientTLSConfig},
-			Timeout:   2 * time.Second,
+			Timeout:   10 * time.Second,
 		}
 		_, err = c.Get(srv.URL)
-		assert.Error(t, err)
+		assert.ErrorContains(t, err, "remote error: tls: certificate required")
 	})
 
 	t.Run("connection fails with certificate from untrusted CA", func(t *testing.T) {
@@ -371,10 +378,10 @@ func TestMTLSIntegration(t *testing.T) {
 
 		c := &http.Client{
 			Transport: &http.Transport{TLSClientConfig: clientTLSConfig},
-			Timeout:   2 * time.Second,
+			Timeout:   10 * time.Second,
 		}
 		_, err = c.Get(srv.URL)
-		assert.Error(t, err)
+		assert.ErrorContains(t, err, "remote error: tls: unknown certificate authority")
 	})
 
 	t.Run("connection fails when server uses wrong CA to verify client", func(t *testing.T) {
@@ -406,10 +413,90 @@ func TestMTLSIntegration(t *testing.T) {
 
 		c := &http.Client{
 			Transport: &http.Transport{TLSClientConfig: clientTLSConfig},
-			Timeout:   2 * time.Second,
+			Timeout:   10 * time.Second,
 		}
 		_, err = c.Get(srv.URL)
-		assert.Error(t, err)
+		assert.ErrorContains(t, err, "remote error: tls: unknown certificate authority")
+	})
+
+	t.Run("client rejects server certificate from untrusted CA", func(t *testing.T) {
+		t.Parallel()
+
+		ca := generateTestCA(t)
+		rogueCA := generateTestCA(t)
+		server := generateTestCert(t, "localhost", rogueCA)
+		client := generateTestCert(t, "test-client", ca)
+
+		// The server would accept the client; only the client's own
+		// verification of the server can make this connection fail.
+		serverTLSConfig, err := NewTLSConfig(
+			mock.StaticProvider(server.CertPEM),
+			mock.StaticProvider(server.KeyPEM),
+			mock.StaticProvider(ca.CertPEM),
+		)
+		require.NoError(t, err)
+
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		srv.TLS = serverTLSConfig
+		srv.StartTLS()
+		defer srv.Close()
+
+		clientTLSConfig, err := NewTLSConfig(
+			mock.StaticProvider(client.CertPEM),
+			mock.StaticProvider(client.KeyPEM),
+			mock.StaticProvider(ca.CertPEM),
+		)
+		require.NoError(t, err)
+
+		c := &http.Client{
+			Transport: &http.Transport{TLSClientConfig: clientTLSConfig},
+			Timeout:   10 * time.Second,
+		}
+		_, err = c.Get(srv.URL)
+		require.Error(t, err)
+		_, ok := errors.AsType[*tls.CertificateVerificationError](err)
+		assert.True(t, ok, "expected a client-side certificate verification error, got: %v", err)
+		_, ok = errors.AsType[x509.UnknownAuthorityError](err)
+		assert.True(t, ok, "expected the chain check to fail, got: %v", err)
+	})
+
+	t.Run("client rejects server whose certificate does not match ServerName", func(t *testing.T) {
+		t.Parallel()
+
+		ca := generateTestCA(t)
+		server := generateTestCert(t, "localhost", ca)
+		client := generateTestCert(t, "test-client", ca)
+
+		serverTLSConfig, err := NewTLSConfig(
+			mock.StaticProvider(server.CertPEM),
+			mock.StaticProvider(server.KeyPEM),
+			mock.StaticProvider(ca.CertPEM),
+		)
+		require.NoError(t, err)
+
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		srv.TLS = serverTLSConfig
+		srv.StartTLS()
+		defer srv.Close()
+
+		clientTLSConfig, err := NewTLSConfig(
+			mock.StaticProvider(client.CertPEM),
+			mock.StaticProvider(client.KeyPEM),
+			mock.StaticProvider(ca.CertPEM),
+			WithServerName("other.example"),
+		)
+		require.NoError(t, err)
+
+		c := &http.Client{
+			Transport: &http.Transport{TLSClientConfig: clientTLSConfig},
+			Timeout:   10 * time.Second,
+		}
+		_, err = c.Get(srv.URL)
+		require.Error(t, err)
+		_, ok := errors.AsType[*tls.CertificateVerificationError](err)
+		assert.True(t, ok, "expected a client-side certificate verification error, got: %v", err)
+		_, ok = errors.AsType[x509.HostnameError](err)
+		assert.True(t, ok, "expected the hostname check to fail, got: %v", err)
 	})
 }
 
