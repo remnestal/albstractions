@@ -248,6 +248,115 @@ func TestServe(t *testing.T) {
 		require.Error(t, g.Run())
 	})
 
+	t.Run("every server is shut down even when an earlier drain exhausts the budget", func(t *testing.T) {
+		t.Parallel()
+		slowAddr := make(chan string, 1)
+		inHandler := make(chan struct{})
+		connClosed := make(chan struct{})
+		slow := &http.Server{
+			Addr: "127.0.0.1:0",
+			BaseContext: func(l net.Listener) context.Context {
+				slowAddr <- l.Addr().String()
+				return context.Background()
+			},
+			Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				close(inHandler)
+				<-r.Context().Done() // only a forced Close ends this request
+				close(connClosed)
+			}),
+		}
+		otherShutDown := make(chan struct{})
+		other := &http.Server{Addr: "127.0.0.1:0"}
+		other.RegisterOnShutdown(func() { close(otherShutDown) })
+		t.Cleanup(func() { _ = slow.Close(); _ = other.Close() })
+
+		g := lifecycle.New(lifecycle.WithGracefulTimeout(50 * time.Millisecond))
+		g.Serve("slow", slow)
+		g.Serve("other", other)
+		runErr := make(chan error, 1)
+		go func() { runErr <- g.Run() }()
+
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+<-slowAddr, nil)
+		require.NoError(t, err)
+		go func() {
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				_ = resp.Body.Close()
+			}
+		}()
+		<-inHandler
+		g.Shutdown()
+
+		err = <-runErr
+		assert.ErrorIs(t, err, context.DeadlineExceeded, "drain timeout must be reported")
+		assert.ErrorContains(t, err, `http server "slow"`)
+		if err != nil {
+			assert.NotContains(t, err.Error(), `"other"`, "a clean drain must not be reported")
+		}
+		for name, ch := range map[string]chan struct{}{"other shut down": otherShutDown, "in-flight request force-closed": connClosed} {
+			select {
+			case <-ch:
+			case <-time.After(time.Second):
+				t.Errorf("%s: did not happen after Run returned", name)
+			}
+		}
+	})
+
+	t.Run("in-flight requests on every server finish before Defer callbacks", func(t *testing.T) {
+		t.Parallel()
+		var mu sync.Mutex
+		var order []string
+		record := func(s string) {
+			mu.Lock()
+			order = append(order, s)
+			mu.Unlock()
+		}
+
+		g := lifecycle.New()
+		var inFlight sync.WaitGroup
+		inFlight.Add(2)
+		var addrs []chan string
+		for _, name := range []string{"a", "b"} {
+			addr := make(chan string, 1)
+			addrs = append(addrs, addr)
+			srv := &http.Server{
+				Addr: "127.0.0.1:0",
+				BaseContext: func(l net.Listener) context.Context {
+					addr <- l.Addr().String()
+					return context.Background()
+				},
+				Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+					inFlight.Done()
+					time.Sleep(50 * time.Millisecond)
+					record(name)
+				}),
+			}
+			t.Cleanup(func() { _ = srv.Close() })
+			g.Serve(name, srv)
+		}
+		g.Defer(time.Second, func(context.Context) { record("callback") })
+
+		runErr := make(chan error, 1)
+		go func() { runErr <- g.Run() }()
+		for _, addr := range addrs {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+<-addr, nil)
+			require.NoError(t, err)
+			go func() {
+				if resp, err := http.DefaultClient.Do(req); err == nil {
+					_ = resp.Body.Close()
+				}
+			}()
+		}
+		inFlight.Wait() // both requests are inside their handlers
+		g.Shutdown()
+		require.NoError(t, <-runErr)
+
+		mu.Lock()
+		defer mu.Unlock()
+		require.Len(t, order, 3)
+		assert.ElementsMatch(t, []string{"a", "b"}, order[:2])
+		assert.Equal(t, "callback", order[2])
+	})
+
 	t.Run("servers drain before Defer callbacks regardless of registration order", func(t *testing.T) {
 		t.Parallel()
 		l, err := net.Listen("tcp", "127.0.0.1:0")

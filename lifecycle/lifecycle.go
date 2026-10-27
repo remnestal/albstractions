@@ -63,7 +63,7 @@ type Group struct {
 	started         bool
 	stopped         bool
 	pending         []func()
-	serverTeardowns []func(context.Context) // always run before regular teardowns
+	serverTeardowns []func(context.Context) error // always run before regular teardowns
 	teardowns       []teardown
 	errs            []error
 	wg              sync.WaitGroup
@@ -110,6 +110,9 @@ func WithSignals(sigs ...os.Signal) Option {
 // The callback is called from the goroutine that produced the error and may
 // be invoked concurrently if multiple goroutines fail simultaneously — it
 // must be safe for concurrent use.
+//
+// Errors from HTTP servers that fail to drain during teardown are not passed
+// to the callback; they appear only in [Group.Run]'s returned error.
 func WithErrorHandler(fn func(error)) Option {
 	return func(g *Group) {
 		g.cfg.errHandler = fn
@@ -179,6 +182,11 @@ func (g *Group) Defer(timeout time.Duration, fn func(ctx context.Context)) {
 // run at the start of teardown, before any [Group.Defer] callbacks,
 // regardless of registration order. http.ErrServerClosed is swallowed — it is
 // the expected return value once server.Shutdown is called.
+//
+// All servers are shut down concurrently and share the graceful budget. A
+// server that has not drained by the deadline has its remaining connections
+// dropped with server.Close, and an error naming it, wrapping
+// context.DeadlineExceeded, is included in [Group.Run]'s error.
 func (g *Group) Serve(name string, server *http.Server) {
 	// The teardown goes first: once registered, it is in any later shutdown,
 	// so the goroutine is never left running without it. If shutdown wins the
@@ -186,8 +194,12 @@ func (g *Group) Serve(name string, server *http.Server) {
 	// server that never started, which is harmless.
 	g.mu.Lock()
 	if !g.stopped {
-		g.serverTeardowns = append(g.serverTeardowns, func(ctx context.Context) {
-			_ = server.Shutdown(ctx)
+		g.serverTeardowns = append(g.serverTeardowns, func(ctx context.Context) error {
+			if err := server.Shutdown(ctx); err != nil {
+				_ = server.Close()
+				return fmt.Errorf("http server %q: shutdown: %w", name, err)
+			}
+			return nil
 		})
 	}
 	g.mu.Unlock()
@@ -255,13 +267,15 @@ func (g *Group) ShutdownCause() error {
 // Shutdown begins when an OS signal is received (if configured with
 // [WithSignals]), [Group.Shutdown] is called, the parent context is cancelled
 // (if configured with [WithContext]), or a goroutine exits prematurely or
-// returns a non-context error. Run then drains all registered HTTP servers,
-// executes teardown callbacks in registration order within their individual
-// deadlines, waits for all goroutines to exit, and returns.
+// returns a non-context error. Run then drains all registered HTTP servers
+// concurrently, executes teardown callbacks in registration order within
+// their individual deadlines, waits for all goroutines to exit, and returns.
 //
-// Run returns the combined errors from goroutines via errors.Join. Goroutines
-// that return context errors (context.Canceled, context.DeadlineExceeded) do
-// not contribute to the returned error.
+// Run returns the combined errors from goroutines and from HTTP servers that
+// failed to drain, via errors.Join. Goroutines that return context errors
+// (context.Canceled, context.DeadlineExceeded) do not contribute, but a drain
+// cut short does, with an error wrapping context.DeadlineExceeded; so
+// errors.Is(err, context.DeadlineExceeded) does not mean a clean stop.
 //
 // Run is safe to call multiple times: the second and subsequent calls block
 // until the first call completes, then return the same error.
@@ -324,12 +338,22 @@ func (g *Group) run() error {
 	overallCtx, overallCancel := context.WithTimeout(context.Background(), g.cfg.graceful)
 	defer overallCancel()
 
-	for _, fn := range serverTeardowns {
-		if overallCtx.Err() != nil {
-			break
-		}
-		fn(overallCtx)
+	// Servers drain concurrently, and every one is shut down even once the
+	// budget is spent: Shutdown with an expired context still closes the
+	// listeners. Errors are kept in registration order.
+	drainErrs := make([]error, len(serverTeardowns))
+	var drains sync.WaitGroup
+	for i, fn := range serverTeardowns {
+		drains.Go(func() { drainErrs[i] = fn(overallCtx) })
 	}
+	drains.Wait()
+	g.mu.Lock()
+	for _, err := range drainErrs {
+		if err != nil {
+			g.errs = append(g.errs, err)
+		}
+	}
+	g.mu.Unlock()
 
 	for _, td := range teardowns {
 		if overallCtx.Err() != nil {

@@ -106,8 +106,8 @@ To fold the group into an existing context tree, pass `WithContext`. Cancelling 
 
 ## Shutdown semantics
 
-Teardown runs in a fixed order. Every HTTP server registered with `Serve` is drained first, then the `Defer` callbacks run sequentially in registration order. Registering a callback after `Serve` does not change this; servers always drain first.
+Teardown runs in a fixed order. Every HTTP server registered with `Serve` is drained first, all of them concurrently, then the `Defer` callbacks run sequentially in registration order. Registering a callback after `Serve` does not change this; servers always drain first.
 
-Each `Defer` callback gets its own deadline, but all of teardown shares the single graceful budget. Once that budget expires the remaining callbacks are skipped and `Run` returns without waiting for stragglers.
+Each `Defer` callback gets its own deadline, but all of teardown shares the single graceful budget. Once that budget expires the remaining callbacks are skipped and `Run` returns without waiting for stragglers. A server still busy when the budget expires is force-closed, so its listener never outlives `Run`, and the failed drain is reported.
 
-`Run` returns the goroutine errors joined with `errors.Join`. Goroutines that return `context.Canceled` or `context.DeadlineExceeded` do not contribute, since a clean stop is not a failure.
+`Run` returns the goroutine errors and any failed server drains joined with `errors.Join`. Goroutines that return `context.Canceled` or `context.DeadlineExceeded` do not contribute, since a clean stop is not a failure. A drain cut short does contribute, as an error naming the server and wrapping `context.DeadlineExceeded`, so that error alone does not mean a clean stop.
