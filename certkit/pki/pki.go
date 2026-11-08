@@ -220,6 +220,11 @@ func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Du
 // GenerateServerCert creates a leaf certificate for server authentication,
 // signed by the given CA.
 //
+// Every DNS name must be non-empty and every IP address 4 or 16 bytes long
+// (a failed [net.ParseIP] returns nil). The created certificate is parsed
+// back before it is returned, so a SAN that crypto/x509 cannot read is an
+// error here rather than at load time.
+//
 // At least one SAN must be provided, either as a DNS name, an IP address, or a
 // URI via [WithURIs].
 func GenerateServerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
@@ -228,12 +233,22 @@ func GenerateServerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dn
 
 // GenerateClientCert creates a leaf certificate for client authentication,
 // signed by the given CA.
+//
+// Every DNS name must be non-empty and every IP address 4 or 16 bytes long
+// (a failed [net.ParseIP] returns nil). The created certificate is parsed
+// back before it is returned, so a SAN that crypto/x509 cannot read is an
+// error here rather than at load time.
 func GenerateClientCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
 	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, opts...)
 }
 
 // GeneratePeerCert creates a leaf certificate for mutual TLS, valid for both
 // server and client authentication, signed by the given CA.
+//
+// Every DNS name must be non-empty and every IP address 4 or 16 bytes long
+// (a failed [net.ParseIP] returns nil). The created certificate is parsed
+// back before it is returned, so a SAN that crypto/x509 cannot read is an
+// error here rather than at load time.
 //
 // At least one SAN must be provided, either as a DNS name, an IP address, or a
 // URI via [WithURIs].
@@ -250,6 +265,17 @@ func generateCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames
 	uris, err := resolveURIs(cfg)
 	if err != nil {
 		return Bundle{}, fmt.Errorf("resolve leaf URI SANs: %w", err)
+	}
+
+	for i, name := range dnsNames {
+		if name == "" {
+			return Bundle{}, fmt.Errorf("DNS name SAN at index %d is empty", i)
+		}
+	}
+	for i, ip := range ips {
+		if len(ip) != net.IPv4len && len(ip) != net.IPv6len {
+			return Bundle{}, fmt.Errorf("IP address SAN at index %d has length %d, want 4 or 16 (a failed net.ParseIP returns nil)", i, len(ip))
+		}
 	}
 
 	for _, u := range extKeyUsage {
@@ -305,6 +331,12 @@ func generateCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames
 	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, privateKey.Public(), caKey)
 	if err != nil {
 		return Bundle{}, fmt.Errorf("create leaf certificate: %w", err)
+	}
+	// crypto/x509 can create certificates it refuses to parse (for example a
+	// URI SAN host it considers an invalid domain). Catch that here rather than
+	// handing out a certificate that fails at load time.
+	if _, err := x509.ParseCertificate(certDER); err != nil {
+		return Bundle{}, fmt.Errorf("parse created leaf certificate: %w", err)
 	}
 
 	keyPEM, err := marshalPrivateKey(privateKey)
