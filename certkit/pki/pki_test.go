@@ -99,6 +99,19 @@ func TestGenerateCA(t *testing.T) {
 		assert.Equal(t, 0, want.Cmp(cert.SerialNumber))
 	})
 
+	t.Run("rejects non-positive validity", func(t *testing.T) {
+		t.Parallel()
+
+		for _, validity := range []time.Duration{0, -time.Hour} {
+			t.Run(validity.String(), func(t *testing.T) {
+				t.Parallel()
+
+				_, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", validity)
+				assert.ErrorContains(t, err, "validity must be positive")
+			})
+		}
+	})
+
 	t.Run("WithSerial rejects zero serial", func(t *testing.T) {
 		t.Parallel()
 
@@ -205,6 +218,19 @@ func TestGeneratePeerCert(t *testing.T) {
 		_, err = pki.GeneratePeerCert(pki.ECDSAP256(), leaf, "leaf2", []string{"localhost"}, nil, time.Hour)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not a CA certificate")
+	})
+
+	t.Run("rejects non-positive validity", func(t *testing.T) {
+		t.Parallel()
+
+		for _, validity := range []time.Duration{0, -time.Hour} {
+			t.Run(validity.String(), func(t *testing.T) {
+				t.Parallel()
+
+				_, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "peer", []string{"localhost"}, nil, validity)
+				assert.ErrorContains(t, err, "validity must be positive")
+			})
+		}
 	})
 
 	t.Run("error when leaf validity exceeds CA expiry", func(t *testing.T) {
@@ -392,6 +418,19 @@ func TestGenerateServerCert(t *testing.T) {
 	ca, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", 24*time.Hour)
 	require.NoError(t, err)
 
+	t.Run("rejects non-positive validity", func(t *testing.T) {
+		t.Parallel()
+
+		for _, validity := range []time.Duration{0, -time.Hour} {
+			t.Run(validity.String(), func(t *testing.T) {
+				t.Parallel()
+
+				_, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", []string{"localhost"}, nil, validity)
+				assert.ErrorContains(t, err, "validity must be positive")
+			})
+		}
+	})
+
 	t.Run("has only ExtKeyUsageServerAuth", func(t *testing.T) {
 		t.Parallel()
 
@@ -483,6 +522,19 @@ func TestGenerateClientCert(t *testing.T) {
 
 	ca, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", 24*time.Hour)
 	require.NoError(t, err)
+
+	t.Run("rejects non-positive validity", func(t *testing.T) {
+		t.Parallel()
+
+		for _, validity := range []time.Duration{0, -time.Hour} {
+			t.Run(validity.String(), func(t *testing.T) {
+				t.Parallel()
+
+				_, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", nil, nil, validity)
+				assert.ErrorContains(t, err, "validity must be positive")
+			})
+		}
+	})
 
 	t.Run("has only ExtKeyUsageClientAuth", func(t *testing.T) {
 		t.Parallel()

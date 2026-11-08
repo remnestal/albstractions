@@ -165,7 +165,13 @@ func WithURIs(uris ...string) Option {
 // GenerateCA creates a self-signed CA certificate using the given algorithm.
 //
 // By default the CA enforces a single-level hierarchy (MaxPathLen=0).
+//
+// validity must be > 0; a zero or negative duration is rejected rather than
+// issuing an already-expired certificate.
 func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Duration, opts ...Option) (Bundle, error) {
+	if validity <= 0 {
+		return Bundle{}, fmt.Errorf("validity must be positive, got %s", validity)
+	}
 	cfg := &certConfig{
 		maxPathLen:     0,
 		maxPathLenZero: true,
@@ -227,6 +233,9 @@ func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Du
 //
 // At least one SAN must be provided, either as a DNS name, an IP address, or a
 // URI via [WithURIs].
+//
+// validity must be > 0; a zero or negative duration is rejected rather than
+// issuing an already-expired certificate.
 func GenerateServerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
 	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, opts...)
 }
@@ -238,6 +247,9 @@ func GenerateServerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dn
 // (a failed [net.ParseIP] returns nil). The created certificate is parsed
 // back before it is returned, so a SAN that crypto/x509 cannot read is an
 // error here rather than at load time.
+//
+// validity must be > 0; a zero or negative duration is rejected rather than
+// issuing an already-expired certificate.
 func GenerateClientCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
 	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, opts...)
 }
@@ -252,11 +264,17 @@ func GenerateClientCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dn
 //
 // At least one SAN must be provided, either as a DNS name, an IP address, or a
 // URI via [WithURIs].
+//
+// validity must be > 0; a zero or negative duration is rejected rather than
+// issuing an already-expired certificate.
 func GeneratePeerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
 	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, opts...)
 }
 
 func generateCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, extKeyUsage []x509.ExtKeyUsage, opts ...Option) (Bundle, error) {
+	if validity <= 0 {
+		return Bundle{}, fmt.Errorf("validity must be positive, got %s", validity)
+	}
 	cfg := &certConfig{}
 	for _, opt := range opts {
 		opt(cfg)
