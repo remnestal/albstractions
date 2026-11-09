@@ -56,9 +56,11 @@ func TestShutdown(t *testing.T) {
 
 	t.Run("before Run causes Run to return immediately", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		g.Shutdown()
-		assert.NoError(t, g.Run())
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Shutdown()
+			assert.NoError(t, g.Run())
+		})
 	})
 }
 
@@ -67,28 +69,32 @@ func TestRequire(t *testing.T) {
 
 	t.Run("error triggers shutdown and is returned from Run", func(t *testing.T) {
 		t.Parallel()
-		sentinel := errors.New("unexpected failure")
-		g := lifecycle.New()
-		g.Require("failing", func(_ context.Context) error { return sentinel })
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+		synctest.Test(t, func(t *testing.T) {
+			sentinel := errors.New("unexpected failure")
+			g := lifecycle.New()
+			g.Require("failing", func(_ context.Context) error { return sentinel })
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		err := g.Run()
-		assert.ErrorIs(t, err, sentinel)
+			err := g.Run()
+			assert.ErrorIs(t, err, sentinel)
+		})
 	})
 
 	t.Run("premature exit triggers shutdown without error", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		g.Require("early-exit", func(_ context.Context) error { return nil })
-		var received atomic.Bool
-		g.Require("waiting", func(ctx context.Context) error {
-			<-ctx.Done()
-			received.Store(true)
-			return nil
-		})
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Require("early-exit", func(_ context.Context) error { return nil })
+			var received atomic.Bool
+			g.Require("waiting", func(ctx context.Context) error {
+				<-ctx.Done()
+				received.Store(true)
+				return nil
+			})
 
-		assert.NoError(t, g.Run())
-		assert.True(t, received.Load())
+			assert.NoError(t, g.Run())
+			assert.True(t, received.Load())
+		})
 	})
 
 	t.Run("context error is not collected", func(t *testing.T) {
@@ -110,36 +116,40 @@ func TestRequire(t *testing.T) {
 		for _, ctxErr := range []error{context.DeadlineExceeded, context.Canceled} {
 			t.Run(ctxErr.Error(), func(t *testing.T) {
 				t.Parallel()
-				var handled atomic.Bool
-				g := lifecycle.New(lifecycle.WithErrorHandler(func(error) { handled.Store(true) }))
-				g.Require("db-poller", func(context.Context) error {
-					return fmt.Errorf("query users: %w", ctxErr)
-				})
+				synctest.Test(t, func(t *testing.T) {
+					var handled atomic.Bool
+					g := lifecycle.New(lifecycle.WithErrorHandler(func(error) { handled.Store(true) }))
+					g.Require("db-poller", func(context.Context) error {
+						return fmt.Errorf("query users: %w", ctxErr)
+					})
 
-				err := g.Run()
-				require.ErrorIs(t, err, ctxErr)
-				assert.True(t, handled.Load())
-				assert.ErrorContains(t, g.ShutdownCause(), "query users")
+					err := g.Run()
+					require.ErrorIs(t, err, ctxErr)
+					assert.True(t, handled.Load())
+					assert.ErrorContains(t, g.ShutdownCause(), "query users")
+				})
 			})
 		}
 	})
 
 	t.Run("dynamic registration after Run starts takes effect", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		dynamicRan := make(chan struct{})
-		g.Require("outer", func(ctx context.Context) error {
-			g.Require("inner", func(ctx context.Context) error {
-				close(dynamicRan)
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			dynamicRan := make(chan struct{})
+			g.Require("outer", func(ctx context.Context) error {
+				g.Require("inner", func(ctx context.Context) error {
+					close(dynamicRan)
+					<-ctx.Done()
+					return nil
+				})
 				<-ctx.Done()
 				return nil
 			})
-			<-ctx.Done()
-			return nil
-		})
-		go func() { <-dynamicRan; g.Shutdown() }()
+			go func() { <-dynamicRan; g.Shutdown() }()
 
-		assert.NoError(t, g.Run())
+			assert.NoError(t, g.Run())
+		})
 	})
 
 	t.Run("no-op when Shutdown precedes Run", func(t *testing.T) {
@@ -183,6 +193,7 @@ func TestRequire(t *testing.T) {
 			assert.NotPanics(t, func() {
 				g.Require("late", func(_ context.Context) error { ran.Store(true); return nil })
 			})
+			synctest.Wait() // a wrongly started goroutine has now run
 			assert.False(t, ran.Load())
 		})
 	})
@@ -270,6 +281,24 @@ func TestDefer(t *testing.T) {
 			assert.True(t, cbCtxCancelled.Load())
 		})
 	})
+
+	t.Run("callbacks are skipped once the graceful budget is spent", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			const graceful = 50 * time.Millisecond
+			g := lifecycle.New(lifecycle.WithGracefulTimeout(graceful))
+			// The callback's own timeout is longer than the budget, so the
+			// budget is what ends it.
+			g.Defer(2*graceful, func(ctx context.Context) { <-ctx.Done() })
+			var secondRan atomic.Bool
+			g.Defer(time.Second, func(context.Context) { secondRan.Store(true) })
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+
+			require.NoError(t, g.Run())
+			assert.False(t, secondRan.Load(), "callback ran after the budget was spent")
+		})
+	})
 }
 
 func TestServe(t *testing.T) {
@@ -277,30 +306,44 @@ func TestServe(t *testing.T) {
 
 	t.Run("starts server and shuts it down gracefully", func(t *testing.T) {
 		t.Parallel()
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err)
-		addr := l.Addr().String()
-		require.NoError(t, l.Close())
-
+		addr := make(chan string, 1)
 		server := &http.Server{
-			Addr: addr,
+			// The server binds its own ephemeral port and reports it once
+			// listening, so no other listener can take the port in between.
+			Addr: "127.0.0.1:0",
+			BaseContext: func(l net.Listener) context.Context {
+				addr <- l.Addr().String()
+				return context.Background()
+			},
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}),
 		}
-		g := lifecycle.New()
+		shutDown := make(chan struct{})
+		server.RegisterOnShutdown(func() { close(shutDown) })
+		t.Cleanup(func() { _ = server.Close() })
+		// A short budget, so a server that is never shut down holds Run for
+		// one second instead of the default 30.
+		g := lifecycle.New(lifecycle.WithGracefulTimeout(time.Second))
 		g.Serve("api", server)
 
 		runErr := make(chan error, 1)
 		go func() { runErr <- g.Run() }()
 
-		require.Eventually(t, func() bool {
-			resp, err := http.Get("http://" + addr + "/")
-			return err == nil && resp.StatusCode == http.StatusOK
-		}, time.Second, 10*time.Millisecond)
+		resp, err := http.Get("http://" + <-addr + "/")
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		g.Shutdown()
 		assert.NoError(t, <-runErr)
+		// Shutdown runs its hooks on their own goroutines, hence the wait,
+		// which only elapses when the server was never shut down.
+		select {
+		case <-shutDown:
+		case <-time.After(time.Second):
+			t.Fatal("server was not shut down")
+		}
 	})
 
 	t.Run("server bind failure triggers shutdown with error", func(t *testing.T) {
@@ -312,7 +355,16 @@ func TestServe(t *testing.T) {
 		g := lifecycle.New(lifecycle.WithGracefulTimeout(100 * time.Millisecond))
 		g.Serve("api", &http.Server{Addr: l.Addr().String()})
 
-		require.Error(t, g.Run())
+		// A real listener cannot run in a synctest bubble, so Run is bounded
+		// here instead.
+		runErr := make(chan error, 1)
+		go func() { runErr <- g.Run() }()
+		select {
+		case err := <-runErr:
+			require.Error(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("Run did not return after the server failed to bind")
+		}
 	})
 
 	t.Run("every server is shut down even when an earlier drain exhausts the budget", func(t *testing.T) {
@@ -426,41 +478,56 @@ func TestServe(t *testing.T) {
 
 	t.Run("servers drain before Defer callbacks regardless of registration order", func(t *testing.T) {
 		t.Parallel()
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		require.NoError(t, err)
-		addr := l.Addr().String()
-		require.NoError(t, l.Close())
-
 		var order []string
 		var mu sync.Mutex
 		record := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
 
+		addr := make(chan string, 1)
+		inHandler := make(chan struct{})
+		release := make(chan struct{})
+		server := &http.Server{
+			Addr: "127.0.0.1:0",
+			BaseContext: func(l net.Listener) context.Context {
+				addr <- l.Addr().String()
+				return context.Background()
+			},
+			Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				close(inHandler)
+				select {
+				case <-release:
+					record("request done")
+				case <-r.Context().Done():
+				}
+			}),
+		}
+		// The request is held open until the server's shutdown begins, so it
+		// is still in flight when teardown starts and a callback run before
+		// the drain would be recorded first.
+		server.RegisterOnShutdown(func() { close(release) })
+		t.Cleanup(func() { _ = server.Close() })
+
 		// Defer registered BEFORE Serve — must still run after server drains.
 		g := lifecycle.New()
 		g.Defer(time.Second, func(_ context.Context) { record("callback") })
-		g.Serve("api", &http.Server{
-			Addr: addr,
-			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				record("request")
-				w.WriteHeader(http.StatusOK)
-			}),
-		})
+		g.Serve("api", server)
 
 		runErr := make(chan error, 1)
 		go func() { runErr <- g.Run() }()
 
-		require.Eventually(t, func() bool {
-			resp, err := http.Get("http://" + addr + "/")
-			return err == nil && resp.StatusCode == http.StatusOK
-		}, time.Second, 10*time.Millisecond)
-
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+<-addr, nil)
+		require.NoError(t, err)
+		go func() {
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				_ = resp.Body.Close()
+			}
+		}()
+		<-inHandler
 		g.Shutdown()
 		require.NoError(t, <-runErr)
 
 		mu.Lock()
 		defer mu.Unlock()
-		// server drained (request completed) before callback ran
-		assert.Equal(t, []string{"request", "callback"}, order)
+		assert.Equal(t, []string{"request done", "callback"}, order)
 	})
 
 	t.Run("server registered concurrently with shutdown is always shut down", func(t *testing.T) {
@@ -538,6 +605,40 @@ func TestRun(t *testing.T) {
 		})
 	})
 
+	t.Run("waits for goroutines still finishing after shutdown begins", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			var finished atomic.Bool
+			g.Require("worker", func(ctx context.Context) error {
+				<-ctx.Done()
+				time.Sleep(10 * time.Millisecond) // cleanup after cancellation
+				finished.Store(true)
+				return nil
+			})
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+
+			require.NoError(t, g.Run())
+			assert.True(t, finished.Load(), "Run returned before the worker finished")
+		})
+	})
+
+	t.Run("does not wait past the graceful budget for a goroutine that ignores cancellation", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			const graceful = 50 * time.Millisecond
+			g := lifecycle.New(lifecycle.WithGracefulTimeout(graceful))
+			release := make(chan struct{})
+			defer close(release) // let the straggler exit so the bubble can end
+			g.Require("straggler", func(context.Context) error { <-release; return nil })
+			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
+
+			start := time.Now()
+			require.NoError(t, g.Run())
+			assert.Equal(t, 10*time.Millisecond+graceful, time.Since(start), "shutdown at 10ms, then the graceful budget")
+		})
+	})
+
 	t.Run("configured signal triggers shutdown", func(t *testing.T) {
 		t.Parallel()
 		g := lifecycle.New(lifecycle.WithSignals(syscall.SIGUSR1))
@@ -559,22 +660,24 @@ func TestRun(t *testing.T) {
 
 	t.Run("second call blocks and returns same error", func(t *testing.T) {
 		t.Parallel()
-		sentinel := errors.New("fail")
-		g := lifecycle.New()
+		synctest.Test(t, func(t *testing.T) {
+			sentinel := errors.New("fail")
+			g := lifecycle.New()
 
-		var teardownCount atomic.Int32
-		g.Defer(time.Second, func(_ context.Context) { teardownCount.Add(1) })
-		g.Require("failing", func(_ context.Context) error { return sentinel })
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+			var teardownCount atomic.Int32
+			g.Defer(time.Second, func(_ context.Context) { teardownCount.Add(1) })
+			g.Require("failing", func(_ context.Context) error { return sentinel })
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		err1 := make(chan error, 1)
-		err2 := make(chan error, 1)
-		go func() { err1 <- g.Run() }()
-		go func() { err2 <- g.Run() }()
+			err1 := make(chan error, 1)
+			err2 := make(chan error, 1)
+			go func() { err1 <- g.Run() }()
+			go func() { err2 <- g.Run() }()
 
-		assert.ErrorIs(t, <-err1, sentinel)
-		assert.ErrorIs(t, <-err2, sentinel)
-		assert.Equal(t, int32(1), teardownCount.Load(), "teardown must run exactly once")
+			assert.ErrorIs(t, <-err1, sentinel)
+			assert.ErrorIs(t, <-err2, sentinel)
+			assert.Equal(t, int32(1), teardownCount.Load(), "teardown must run exactly once")
+		})
 	})
 
 	t.Run("a panicking Defer callback does not block other callers", func(t *testing.T) {
@@ -610,27 +713,29 @@ func TestRun(t *testing.T) {
 
 	t.Run("concurrent registration and shutdown without data races", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New(lifecycle.WithGracefulTimeout(100 * time.Millisecond))
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New(lifecycle.WithGracefulTimeout(100 * time.Millisecond))
 
-		var setup sync.WaitGroup
-		for range 10 {
-			setup.Go(func() {
-				g.Require("worker", func(ctx context.Context) error { <-ctx.Done(); return nil })
-			})
-		}
-		for range 5 {
-			setup.Go(func() {
-				g.Defer(50*time.Millisecond, func(_ context.Context) {})
-			})
-		}
+			var setup sync.WaitGroup
+			for range 10 {
+				setup.Go(func() {
+					g.Require("worker", func(ctx context.Context) error { <-ctx.Done(); return nil })
+				})
+			}
+			for range 5 {
+				setup.Go(func() {
+					g.Defer(50*time.Millisecond, func(_ context.Context) {})
+				})
+			}
 
-		runErr := make(chan error, 1)
-		go func() { runErr <- g.Run() }()
-		setup.Wait()
-		time.Sleep(10 * time.Millisecond)
-		g.Shutdown()
+			runErr := make(chan error, 1)
+			go func() { runErr <- g.Run() }()
+			setup.Wait()
+			time.Sleep(10 * time.Millisecond)
+			g.Shutdown()
 
-		assert.NoError(t, <-runErr)
+			assert.NoError(t, <-runErr)
+		})
 	})
 }
 
@@ -674,48 +779,56 @@ func TestDone(t *testing.T) {
 func TestReady(t *testing.T) {
 	t.Parallel()
 
-	t.Run("closed after pre-registered goroutines are spawned", func(t *testing.T) {
+	t.Run("closed once Run starts and still closed after it returns", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
 
-		started := make(chan struct{})
-		g.Require("worker", func(ctx context.Context) error {
-			close(started)
-			<-ctx.Done()
-			return nil
+			started := make(chan struct{})
+			g.Require("worker", func(ctx context.Context) error {
+				close(started)
+				<-ctx.Done()
+				return nil
+			})
+
+			select {
+			case <-g.Ready():
+				t.Fatal("Ready should not be closed before Run")
+			default:
+			}
+
+			// That pre-registered goroutines are spawned before Ready closes
+			// is not observable from outside the package; the test checks
+			// only that the worker runs once the group is ready.
+			go func() {
+				<-g.Ready()
+				<-started
+				g.Shutdown()
+			}()
+
+			assert.NoError(t, g.Run())
+
+			select {
+			case <-g.Ready():
+			default:
+				t.Fatal("Ready should be closed after Run")
+			}
 		})
-
-		select {
-		case <-g.Ready():
-			t.Fatal("Ready should not be closed before Run")
-		default:
-		}
-
-		go func() {
-			<-g.Ready()
-			g.Shutdown()
-		}()
-
-		assert.NoError(t, g.Run())
-
-		select {
-		case <-g.Ready():
-		default:
-			t.Fatal("Ready should be closed after Run")
-		}
 	})
 
 	t.Run("closed immediately when no goroutines are pre-registered", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		g.Shutdown()
-		_ = g.Run()
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Shutdown()
+			_ = g.Run()
 
-		select {
-		case <-g.Ready():
-		case <-time.After(time.Second):
-			t.Fatal("Ready was not closed")
-		}
+			select {
+			case <-g.Ready():
+			case <-time.After(time.Second):
+				t.Fatal("Ready was not closed")
+			}
+		})
 	})
 }
 
@@ -756,38 +869,44 @@ func TestShutdownCause(t *testing.T) {
 
 	t.Run("goroutine error for goroutine failure", func(t *testing.T) {
 		t.Parallel()
-		sentinel := errors.New("worker failed")
-		g := lifecycle.New()
-		g.Require("failing", func(_ context.Context) error { return sentinel })
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+		synctest.Test(t, func(t *testing.T) {
+			sentinel := errors.New("worker failed")
+			g := lifecycle.New()
+			g.Require("failing", func(_ context.Context) error { return sentinel })
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		require.ErrorIs(t, g.Run(), sentinel)
-		assert.ErrorIs(t, g.ShutdownCause(), sentinel)
+			require.ErrorIs(t, g.Run(), sentinel)
+			assert.ErrorIs(t, g.ShutdownCause(), sentinel)
+		})
 	})
 
 	t.Run("goroutine name appears in cause on error", func(t *testing.T) {
 		t.Parallel()
-		sentinel := errors.New("boom")
-		g := lifecycle.New()
-		g.Require("my-worker", func(_ context.Context) error { return sentinel })
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+		synctest.Test(t, func(t *testing.T) {
+			sentinel := errors.New("boom")
+			g := lifecycle.New()
+			g.Require("my-worker", func(_ context.Context) error { return sentinel })
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		require.ErrorIs(t, g.Run(), sentinel)
-		cause := g.ShutdownCause()
-		assert.ErrorIs(t, cause, sentinel)
-		assert.Contains(t, cause.Error(), "my-worker")
+			require.ErrorIs(t, g.Run(), sentinel)
+			cause := g.ShutdownCause()
+			assert.ErrorIs(t, cause, sentinel)
+			assert.Contains(t, cause.Error(), "my-worker")
+		})
 	})
 
 	t.Run("premature goroutine exit produces non-nil cause with name", func(t *testing.T) {
 		t.Parallel()
-		g := lifecycle.New()
-		g.Require("early-exit", func(_ context.Context) error { return nil })
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+		synctest.Test(t, func(t *testing.T) {
+			g := lifecycle.New()
+			g.Require("early-exit", func(_ context.Context) error { return nil })
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		assert.NoError(t, g.Run())
-		cause := g.ShutdownCause()
-		assert.NotNil(t, cause)
-		assert.Contains(t, cause.Error(), "early-exit")
+			assert.NoError(t, g.Run())
+			cause := g.ShutdownCause()
+			assert.NotNil(t, cause)
+			assert.Contains(t, cause.Error(), "early-exit")
+		})
 	})
 }
 
@@ -796,15 +915,17 @@ func TestWithContext(t *testing.T) {
 
 	t.Run("context error from a cancelled parent is a clean stop", func(t *testing.T) {
 		t.Parallel()
-		parent, cancel := context.WithCancel(t.Context())
-		g := lifecycle.New(lifecycle.WithContext(parent))
-		// The worker watches the parent itself and may return before the
-		// group's watcher has started shutdown.
-		g.Require("worker", func(context.Context) error {
-			cancel()
-			return parent.Err()
+		synctest.Test(t, func(t *testing.T) {
+			parent, cancel := context.WithCancel(t.Context())
+			g := lifecycle.New(lifecycle.WithContext(parent))
+			// The worker watches the parent itself and may return before the
+			// group's watcher has started shutdown.
+			g.Require("worker", func(context.Context) error {
+				cancel()
+				return parent.Err()
+			})
+			assert.NoError(t, g.Run())
 		})
-		assert.NoError(t, g.Run())
 	})
 
 	t.Run("parent cancellation triggers shutdown", func(t *testing.T) {
@@ -897,17 +1018,19 @@ func TestWithErrorHandler(t *testing.T) {
 
 	t.Run("called with error when goroutine fails", func(t *testing.T) {
 		t.Parallel()
-		sentinel := errors.New("handler test")
-		var handled atomic.Value
-		g := lifecycle.New(lifecycle.WithErrorHandler(func(err error) {
-			handled.Store(err)
-		}))
-		g.Require("failing", func(_ context.Context) error { return sentinel })
-		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
+		synctest.Test(t, func(t *testing.T) {
+			sentinel := errors.New("handler test")
+			var handled atomic.Value
+			g := lifecycle.New(lifecycle.WithErrorHandler(func(err error) {
+				handled.Store(err)
+			}))
+			g.Require("failing", func(_ context.Context) error { return sentinel })
+			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
-		err := g.Run()
-		require.ErrorIs(t, err, sentinel)
-		require.NotNil(t, handled.Load())
-		assert.ErrorIs(t, handled.Load().(error), sentinel)
+			err := g.Run()
+			require.ErrorIs(t, err, sentinel)
+			require.NotNil(t, handled.Load())
+			assert.ErrorIs(t, handled.Load().(error), sentinel)
+		})
 	})
 }
