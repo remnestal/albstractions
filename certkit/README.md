@@ -85,7 +85,7 @@ free() // the key is no longer needed; do not wait for the deferred call
 
 The built-in hex and base64 options decode from bytes to bytes into buffers the provider zeroes, also when decoding fails. A custom `Decoder` necessarily receives the encoded key as a Go string, a copy that cannot be zeroed.
 
-`FromFile` refuses to read a file whose mode is looser than `0600`. Pass `WithoutPermissionCheck` to opt out where the platform makes that impractical.
+`FromFile` refuses to read a file whose mode is looser than `0600`. Pass `WithoutPermissionCheck` to opt out where the platform makes that impractical. The file is opened once and both the check and the read use that handle, so a file swapped in between cannot slip past the check.
 
 ## Options
 
@@ -98,7 +98,7 @@ The built-in hex and base64 options decode from bytes to bytes into buffers the 
 | `WithEnvDecoder(d)` / `WithFileDecoder(d)` | env / file | Decode with a custom `Decoder` |
 | `WithEnvTrimWhitespace()` / `WithFileTrimWhitespace()` | env / file | Strip all whitespace before decoding |
 | `WithEnvGetter(fn)` | env | Read variables through fn instead of `os.Getenv` |
-| `WithFilesystem(fs)` | file | Read through a `FileSystem` instead of the OS |
+| `WithFilesystem(fsys)` | file | Open the file through an `fs.FS` instead of the OS |
 | `WithoutPermissionCheck()` | file | Skip the `0600`-or-stricter mode check |
 
 ### `pki`
@@ -133,12 +133,12 @@ tlsCfg, err := mtls.NewTLSConfig(
 )
 ```
 
-`mock.ErrorProvider(err)` covers the failure path, and `mock.FileSystem` is an in-memory `keyloader.FileSystem` whose `mock.File` entries carry a mode, so the permission-check behaviour of `FromFile` is testable without touching disk:
+`mock.ErrorProvider(err)` covers the failure path. `FromFile` reads through any `fs.FS`, so the standard library's `fstest.MapFS`, whose entries carry a mode, makes the permission check testable without touching disk. Its paths are unrooted:
 
 ```go
-fsys := &mock.FileSystem{Files: map[string]mock.File{
-    "/etc/key.pem": {Data: keyPEM, Mode: 0o644}, // too permissive
-}}
+fsys := fstest.MapFS{
+    "key.pem": {Data: keyPEM, Mode: 0o644}, // too permissive
+}
 
-_, _, err := keyloader.FromFile("/etc/key.pem", keyloader.WithFilesystem(fsys))()
+_, _, err := keyloader.FromFile("key.pem", keyloader.WithFilesystem(fsys))()
 ```

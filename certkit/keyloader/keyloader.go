@@ -10,7 +10,9 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 )
@@ -115,25 +117,8 @@ func FromEnv(envVar string, opts ...EnvOption) Provider {
 	}
 }
 
-// FileSystem abstracts file system operations for testability.
-type FileSystem interface {
-	ReadFile(name string) ([]byte, error)
-	Stat(name string) (fs.FileInfo, error)
-}
-
-// osfs is a FileSystem implementation using the real OS filesystem.
-type osfs struct{}
-
-func (osfs) ReadFile(name string) ([]byte, error) {
-	return os.ReadFile(name)
-}
-
-func (osfs) Stat(name string) (fs.FileInfo, error) {
-	return os.Stat(name)
-}
-
 type fileConfig struct {
-	filesystem       FileSystem
+	filesystem       fs.FS
 	decode           decodeFunc
 	trimWhitespace   bool
 	checkPermissions bool
@@ -142,8 +127,14 @@ type fileConfig struct {
 // FileOption configures a file key provider.
 type FileOption func(*fileConfig)
 
-// WithFilesystem overrides the filesystem implementation (for testing).
-func WithFilesystem(filesystem FileSystem) FileOption {
+// WithFilesystem makes [FromFile] open the file through filesystem instead of
+// the OS.
+//
+// The path given to FromFile is passed to filesystem's Open unchanged, so it
+// must be valid there: an [io/fs] path is unrooted and slash-separated, such
+// as "keys/tls.key". [testing/fstest.MapFS] serves files with a mode from
+// memory, for testing the permission check.
+func WithFilesystem(filesystem fs.FS) FileOption {
 	return func(c *fileConfig) {
 		c.filesystem = filesystem
 	}
@@ -196,12 +187,11 @@ func WithFileBase64() FileOption {
 // By default it uses the OS filesystem and checks that file permissions are
 // 0600 or stricter.
 //
-// Note: the permission check is subject to a TOCTOU race — the file's
-// permissions could change between the Stat and ReadFile calls. There is
-// no atomic "read-if-permissions-match" operation in Go's standard library.
+// The file is opened once, and the permission check and the read both use
+// that handle, so a file swapped in between cannot pass the check for
+// another.
 func FromFile(path string, opts ...FileOption) Provider {
 	cfg := &fileConfig{
-		filesystem:       osfs{},
 		checkPermissions: true,
 	}
 	for _, opt := range opts {
@@ -209,18 +199,22 @@ func FromFile(path string, opts ...FileOption) Provider {
 	}
 
 	return func() ([]byte, func(), error) {
-		if cfg.checkPermissions {
-			info, err := cfg.filesystem.Stat(path)
-			if err != nil {
-				return nil, func() {}, fmt.Errorf("stat key file: %w", err)
-			}
-			mode := info.Mode()
-			if mode&0o077 != 0 {
-				return nil, func() {}, fmt.Errorf("key file %s has insecure permissions %o (must be 0600 or stricter)", path, mode.Perm())
-			}
+		f, err := cfg.open(path)
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("open key file: %w", err)
+		}
+		// A read-only file has nothing to flush, so a Close error is moot.
+		defer func() { _ = f.Close() }()
+
+		info, err := f.Stat()
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("stat key file: %w", err)
+		}
+		if cfg.checkPermissions && info.Mode()&0o077 != 0 {
+			return nil, func() {}, fmt.Errorf("key file %s has insecure permissions %o (must be 0600 or stricter)", path, info.Mode().Perm())
 		}
 
-		data, err := cfg.filesystem.ReadFile(path)
+		data, err := readKey(f, info.Size())
 		if err != nil {
 			return nil, func() {}, fmt.Errorf("read key file: %w", err)
 		}
@@ -230,6 +224,47 @@ func FromFile(path string, opts ...FileOption) Provider {
 		}
 
 		return processKey(data, cfg.trimWhitespace, cfg.decode)
+	}
+}
+
+func (c *fileConfig) open(path string) (fs.File, error) {
+	if c.filesystem != nil {
+		return c.filesystem.Open(path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// readKey reads r to the end into a buffer sized from size, the file's length
+// as reported by Stat, so that reading a regular file never grows the buffer.
+// Where it must grow, the outgrown buffer is zeroed before it is dropped, so no
+// copy of the key escapes zeroing; io.ReadAll gives no such guarantee.
+func readKey(r io.Reader, size int64) ([]byte, error) {
+	// One spare byte lets the read that returns io.EOF land without growing.
+	n := 512
+	if size > 0 && size < 1<<20 {
+		n = int(size) + 1
+	}
+	buf := make([]byte, 0, n)
+	for {
+		if len(buf) == cap(buf) {
+			grown := make([]byte, len(buf), 2*cap(buf))
+			copy(grown, buf)
+			clear(buf)
+			buf = grown
+		}
+		m, err := r.Read(buf[len(buf):cap(buf)])
+		buf = buf[:len(buf)+m]
+		if errors.Is(err, io.EOF) {
+			return buf, nil
+		}
+		if err != nil {
+			clear(buf)
+			return nil, err
+		}
 	}
 }
 
