@@ -130,6 +130,14 @@ l1 := cache.NewReadThrough[string, User](cache.NewMemory[string, User](), cache.
 defer l1.Close()
 ```
 
+## Wrapper options
+
+| Option | Applies to | Effect |
+|--------|-----------|--------|
+| `WithSingleFlight()` | `ReadThrough` | Collapse concurrent loads of the same key into one loader call whose result the waiters share. Off by default |
+| `WithMissError(errs...)` | `ReadThrough` | Further loader errors, matched with `errors.Is`, that mean a genuine miss alongside `ErrCacheMiss`. Repeated uses accumulate |
+| `WithDeleter[K, V](fn)` | `WriteThrough` | Delete from the backing store before the front. Without it a delete evicts from the front only |
+
 ## Iteration
 
 `Items` returns an `iter.Seq2[K, V]` over the live entries:

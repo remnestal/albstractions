@@ -37,8 +37,11 @@ Grows from a base delay up to a cap, multiplying by a configurable factor (defau
 
 ```go
 s := schedule.NewExponential(100*time.Millisecond, 30*time.Second)
+```
 
-// With a custom factor:
+A custom factor changes the growth rate:
+
+```go
 s := schedule.NewExponential(100*time.Millisecond, 30*time.Second,
     schedule.WithFactor(1.5),
 )
@@ -50,8 +53,11 @@ Picks a uniformly distributed random delay in [lo, hi] on each call.
 
 ```go
 s := schedule.NewUniform(100*time.Millisecond, 500*time.Millisecond)
+```
 
-// With a fixed random source for deterministic behaviour:
+A fixed random source makes the sequence deterministic:
+
+```go
 s := schedule.NewUniform(100*time.Millisecond, 500*time.Millisecond,
     schedule.WithSource(rand.NewPCG(42, 0)),
 )
@@ -63,8 +69,11 @@ Oscillates between lo and hi following a raised cosine curve over the given peri
 
 ```go
 s := schedule.NewSine(100*time.Millisecond, 1*time.Second, time.Minute)
+```
 
-// With an injected clock, for deterministic tests:
+An injected clock makes the phase deterministic, for tests:
+
+```go
 s := schedule.NewSine(100*time.Millisecond, 1*time.Second, time.Minute,
     schedule.WithClock(func() time.Time { return fixed }),
 )

@@ -50,7 +50,7 @@ tlsCfg, err := mtls.NewTLSConfig(
 srv := &http.Server{Addr: ":8443", Handler: mux, TLSConfig: tlsCfg}
 ```
 
-For the client side of the same connection, add `mtls.WithServerName` so verification uses the expected identity rather than the dialled address.
+On the client side, `http.Client`, `tls.Dial` and gRPC verify the server against the host they dial, so the same config works unchanged. Add `mtls.WithServerName` only when the certificate does not name that host, for example when dialling an IP address or a load balancer, or when wrapping an existing connection with `tls.Client`.
 
 The client matches the server's DNS name or IP address, never a URI SAN, so a server whose leaf carries only URI SANs (for example a SPIFFE ID from `pki.WithURIs`) fails the handshake. Issue server leaves a DNS name or IP address as well. Servers check client certificates against the CA alone, so URI-only clients are unaffected.
 

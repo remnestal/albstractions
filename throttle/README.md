@@ -20,6 +20,9 @@ Pacing and concurrency are separate knobs. The schedule decides how often a call
 
 ```go
 import (
+    "context"
+    "time"
+
     "github.com/remnestal/albstractions/schedule"
     "github.com/remnestal/albstractions/throttle"
 )

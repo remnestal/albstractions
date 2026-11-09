@@ -18,9 +18,11 @@ type Option func(*tls.Config)
 
 // WithServerName sets the ServerName field on the returned tls.Config.
 //
-// This is not required when using stdlib http.Client — the Transport sets
-// ServerName automatically from the request URL. It is useful for raw
-// tls.Dial calls or gRPC where no URL parsing occurs.
+// A client verifies the server's certificate against ServerName. When it is
+// empty, http.Transport, tls.Dial and gRPC's TLS credentials fill it in from
+// the host being dialled, so set it only when the certificate does not name
+// that host, for example when dialling an IP address or a load balancer, or
+// when wrapping an existing connection with tls.Client, which infers nothing.
 func WithServerName(name string) Option {
 	return func(c *tls.Config) {
 		c.ServerName = name
