@@ -88,4 +88,4 @@ The hook fires before the delay is waited out, so a positive `Next` is not a pro
 
 ## Cancellation
 
-`ctx.Done()` interrupts the inter-attempt sleep, in which case `Do` returns `ctx.Err()`. Cancellation during `fn` itself surfaces as whatever `fn` returns.
+`ctx.Done()` interrupts the inter-attempt sleep, in which case `Do` returns `ctx.Err()`. A delay <= 0 skips the sleep but not that check, so a done context still ends `Do` with `ctx.Err()` before the next attempt. Cancellation during `fn` itself surfaces as whatever `fn` returns.

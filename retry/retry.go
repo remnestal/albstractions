@@ -101,10 +101,11 @@ func New(s Schedule, stop StopFunc, opts ...Option) *Retry {
 // is done.
 //
 // On success Do returns nil. On halt Do returns the error from the final
-// attempt. On context cancellation during the inter-attempt sleep Do
-// returns ctx.Err(); cancellation during fn surfaces as whatever fn
-// returns. If the supplied Schedule satisfies [Resetter], Reset is
-// called once at the start of Do.
+// attempt. Once ctx is done between attempts Do returns ctx.Err(), whether it
+// is done during the inter-attempt sleep or the Schedule's delay is <= 0 and
+// there is no sleep. Cancellation during fn surfaces as whatever fn returns.
+// If the supplied Schedule satisfies [Resetter], Reset is called once at the
+// start of Do.
 func (r *Retry) Do(ctx context.Context, fn func(context.Context) error) error {
 	if resetter, ok := r.schedule.(Resetter); ok {
 		resetter.Reset()
