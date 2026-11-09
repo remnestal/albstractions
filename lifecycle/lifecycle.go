@@ -436,15 +436,11 @@ func (g *Group) register(fn func()) {
 		return
 	}
 	if g.started {
-		// wg.Add under the mutex prevents a WaitGroup race: stopped=true is
-		// also set under the mutex, so either this Add happens before the Wait
+		// wg.Go under the mutex prevents a WaitGroup race: stopped=true is
+		// also set under the mutex, so either this Go happens before the Wait
 		// (goroutine is counted) or stopped=true is seen and we return early.
-		g.wg.Add(1)
+		g.wg.Go(fn)
 		g.mu.Unlock()
-		go func() {
-			defer g.wg.Done()
-			fn()
-		}()
 		return
 	}
 	g.pending = append(g.pending, fn)
