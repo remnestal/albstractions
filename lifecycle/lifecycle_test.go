@@ -116,16 +116,18 @@ func TestRequire(t *testing.T) {
 		for _, ctxErr := range []error{context.DeadlineExceeded, context.Canceled} {
 			t.Run(ctxErr.Error(), func(t *testing.T) {
 				t.Parallel()
-				var handled atomic.Bool
-				g := lifecycle.New(lifecycle.WithErrorHandler(func(error) { handled.Store(true) }))
-				g.Require("db-poller", func(context.Context) error {
-					return fmt.Errorf("query users: %w", ctxErr)
-				})
+				synctest.Test(t, func(t *testing.T) {
+					var handled atomic.Bool
+					g := lifecycle.New(lifecycle.WithErrorHandler(func(error) { handled.Store(true) }))
+					g.Require("db-poller", func(context.Context) error {
+						return fmt.Errorf("query users: %w", ctxErr)
+					})
 
-				err := g.Run()
-				require.ErrorIs(t, err, ctxErr)
-				assert.True(t, handled.Load())
-				assert.ErrorContains(t, g.ShutdownCause(), "query users")
+					err := g.Run()
+					require.ErrorIs(t, err, ctxErr)
+					assert.True(t, handled.Load())
+					assert.ErrorContains(t, g.ShutdownCause(), "query users")
+				})
 			})
 		}
 	})
@@ -913,15 +915,17 @@ func TestWithContext(t *testing.T) {
 
 	t.Run("context error from a cancelled parent is a clean stop", func(t *testing.T) {
 		t.Parallel()
-		parent, cancel := context.WithCancel(t.Context())
-		g := lifecycle.New(lifecycle.WithContext(parent))
-		// The worker watches the parent itself and may return before the
-		// group's watcher has started shutdown.
-		g.Require("worker", func(context.Context) error {
-			cancel()
-			return parent.Err()
+		synctest.Test(t, func(t *testing.T) {
+			parent, cancel := context.WithCancel(t.Context())
+			g := lifecycle.New(lifecycle.WithContext(parent))
+			// The worker watches the parent itself and may return before the
+			// group's watcher has started shutdown.
+			g.Require("worker", func(context.Context) error {
+				cancel()
+				return parent.Err()
+			})
+			assert.NoError(t, g.Run())
 		})
-		assert.NoError(t, g.Run())
 	})
 
 	t.Run("parent cancellation triggers shutdown", func(t *testing.T) {
