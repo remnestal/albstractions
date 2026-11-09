@@ -25,9 +25,9 @@ cert, err := pki.GeneratePeerCert(
     pki.ECDSAP256(),
     ca,
     "my-service",
-    []string{"localhost", "my-service.internal"},
-    []net.IP{net.ParseIP("127.0.0.1")},
     time.Hour,
+    pki.WithDNSNames("localhost", "my-service.internal"),
+    pki.WithIPAddresses(net.ParseIP("127.0.0.1")),
     pki.WithURIs("spiffe://example.org/ns/default/sa/my-service"),
 )
 ```
@@ -38,11 +38,13 @@ Both return a `Bundle` of PEM-encoded `CertPEM` and `KeyPEM` bytes.
 
 `NewTLSConfig` produces a config usable for both server and client roles, with TLS 1.3 as the floor and `RequireAndVerifyClientCert` enabled. The CA provider populates both `ClientCAs` and `RootCAs`.
 
+`FromFile` applies its `0600` check to every file it reads, so the certificate and CA providers opt out with `WithoutPermissionCheck`: those files are public and usually `0644`.
+
 ```go
 tlsCfg, err := mtls.NewTLSConfig(
-    keyloader.FromFile("/etc/myservice/cert.pem"),
+    keyloader.FromFile("/etc/myservice/cert.pem", keyloader.WithoutPermissionCheck()),
     keyloader.FromFile("/etc/myservice/key.pem"),
-    keyloader.FromFile("/etc/myservice/ca.pem"),
+    keyloader.FromFile("/etc/myservice/ca.pem", keyloader.WithoutPermissionCheck()),
 )
 
 srv := &http.Server{Addr: ":8443", Handler: mux, TLSConfig: tlsCfg}
@@ -50,19 +52,21 @@ srv := &http.Server{Addr: ":8443", Handler: mux, TLSConfig: tlsCfg}
 
 For the client side of the same connection, add `mtls.WithServerName` so verification uses the expected identity rather than the dialled address.
 
+The client matches the server's DNS name or IP address, never a URI SAN, so a server whose leaf carries only URI SANs (for example a SPIFFE ID from `pki.WithURIs`) fails the handshake. Issue server leaves a DNS name or IP address as well. Servers check client certificates against the CA alone, so URI-only clients are unaffected.
+
 ### Load key material from the environment
 
-`FromEnv` reads a variable instead of a file, decoding it on the way out. This suits platforms that inject secrets as base64 or hex blobs.
+`FromEnv` reads a variable instead of a file, and wrapping it in `Base64` decodes it on the way out. This suits platforms that inject secrets as base64 or hex blobs. The decoding wrappers take any `Provider`, so they work the same on a file or a test double.
 
 ```go
 tlsCfg, err := mtls.NewTLSConfig(
-    keyloader.FromEnv("SERVICE_CERT", keyloader.WithEnvBase64()),
-    keyloader.FromEnv("SERVICE_KEY", keyloader.WithEnvBase64()),
-    keyloader.FromFile("/etc/myservice/ca.pem"),
+    keyloader.Base64(keyloader.FromEnv("SERVICE_CERT")),
+    keyloader.Base64(keyloader.FromEnv("SERVICE_KEY")),
+    keyloader.FromFile("/etc/myservice/ca.pem", keyloader.WithoutPermissionCheck()),
 )
 ```
 
-Note that the Go string backing an environment variable cannot be zeroed, so a file provider gives key material a shorter lifetime in memory.
+`FromEnv` zeroes its copy of the value, but not the variable itself: the runtime holds it as an immutable string for the life of the process, and child processes inherit it. A file provider keeps key material shorter-lived.
 
 ## Key material lifetime
 
@@ -79,37 +83,45 @@ cert, err := tls.X509KeyPair(certPEM, key)
 free() // the key is no longer needed; do not wait for the deferred call
 ```
 
-`FromFile` refuses to read a file whose mode is looser than `0600`. Pass `WithoutPermissionCheck` to opt out where the platform makes that impractical.
+`Hex`, `Base64` and `Decode` zero every buffer they decode through, also when decoding fails.
+
+`FromFile` refuses to read a file whose mode is looser than `0600`. Pass `WithoutPermissionCheck` to opt out where the platform makes that impractical, such as Windows, which reports every file as `0666`, or `0444` when read-only. The file is opened once and both the check and the read use that handle, so a file swapped in between cannot slip past the check.
 
 ## Options
 
 ### `keyloader`
 
-| Option | Applies to | Effect |
+| Symbol | Applies to | Effect |
 |--------|-----------|--------|
-| `WithEnvHex()` / `WithFileHex()` | env / file | Hex-decode the loaded value |
-| `WithEnvBase64()` / `WithFileBase64()` | env / file | Base64-decode the loaded value |
-| `WithEnvDecoder(d)` / `WithFileDecoder(d)` | env / file | Decode with a custom `Decoder` |
-| `WithEnvTrimWhitespace()` / `WithFileTrimWhitespace()` | env / file | Strip all whitespace before decoding |
+| `Hex(p)` / `Base64(p)` | any provider | Hex- or base64-decode the key from `p`, skipping ASCII space, tab, CR and LF |
+| `Decode(p, d)` | any provider | Decode the key from `p` with a custom `Decoder`, which receives the value unchanged |
 | `WithEnvGetter(fn)` | env | Read variables through fn instead of `os.Getenv` |
-| `WithFilesystem(fs)` | file | Read through a `FileSystem` instead of the OS |
+| `WithFilesystem(fsys)` | file | Open the file through an `fs.FS` instead of the OS |
 | `WithoutPermissionCheck()` | file | Skip the `0600`-or-stricter mode check |
 
 ### `pki`
+
+`GenerateCA` takes `CAOption`s and the leaf generators take `LeafOption`s, so an option that does not apply is a compile error rather than silently ignored.
 
 | Symbol | Effect |
 |--------|--------|
 | `ECDSAP256()`, `ECDSAP384()`, `RSA2048()`, `RSA4096()`, `Ed25519()` | Key algorithm for the generated certificate |
 | `MLDSA44()`, `MLDSA65()`, `MLDSA87()` | Post-quantum ML-DSA (FIPS 204) key. Peers must accept ML-DSA signatures in TLS 1.3, as Go does from 1.27 |
-| `WithMaxPathLen(n)` | CA path length constraint. Default 0, a single-level hierarchy |
-| `WithSerial(n)` | Fixed serial number instead of a random 128-bit one |
-| `WithURIs(uris...)` | URI SANs, for example SPIFFE IDs. Validated as absolute ASCII URIs that round-trip verbatim |
+| `WithMaxPathLen(n)` | CA only: path length constraint. Default 0, a single-level hierarchy |
+| `WithSerial(n)` | CA or leaf: fixed serial number instead of a random 128-bit one |
+| `WithDNSNames(names...)` | Leaf only: DNS name SANs |
+| `WithIPAddresses(ips...)` | Leaf only: IP address SANs |
+| `WithURIs(uris...)` | Leaf only: URI SANs, for example SPIFFE IDs. Validated as absolute ASCII URIs that round-trip verbatim |
 
 ### `mtls`
 
 | Option | Effect |
 |--------|--------|
 | `WithServerName(name)` | Sets `ServerName`, for verifying a peer by identity rather than dial address |
+
+## Raw keys
+
+A raw key is used byte for byte. A key file written with `echo` ends in a newline, and that newline becomes part of the key; write it with `printf '%s'`, or store the key hex- or base64-encoded, whose decoders skip whitespace.
 
 ## Generation guarantees
 
@@ -127,12 +139,12 @@ tlsCfg, err := mtls.NewTLSConfig(
 )
 ```
 
-`mock.ErrorProvider(err)` covers the failure path, and `mock.FileSystem` is an in-memory `keyloader.FileSystem` whose `mock.File` entries carry a mode, so the permission-check behaviour of `FromFile` is testable without touching disk:
+`mock.ErrorProvider(err)` covers the failure path. `FromFile` reads through any `fs.FS`, so the standard library's `fstest.MapFS`, whose entries carry a mode, makes the permission check testable without touching disk. Its paths are unrooted:
 
 ```go
-fsys := &mock.FileSystem{Files: map[string]mock.File{
-    "/etc/key.pem": {Data: keyPEM, Mode: 0o644}, // too permissive
-}}
+fsys := fstest.MapFS{
+    "key.pem": {Data: keyPEM, Mode: 0o644}, // too permissive
+}
 
-_, _, err := keyloader.FromFile("/etc/key.pem", keyloader.WithFilesystem(fsys))()
+_, _, err := keyloader.FromFile("key.pem", keyloader.WithFilesystem(fsys))()
 ```

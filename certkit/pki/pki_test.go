@@ -126,13 +126,35 @@ func TestGenerateCA(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("WithSerial rejects serial exceeding 20 octets", func(t *testing.T) {
+	t.Run("WithSerial limits the serial to 20 octets when DER-encoded", func(t *testing.T) {
 		t.Parallel()
 
-		// 2^161 is 21 octets.
-		tooBig := new(big.Int).Lsh(big.NewInt(1), 161)
-		_, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour, pki.WithSerial(tooBig))
-		assert.Error(t, err)
+		// DER prefixes a zero octet to a value whose top bit is set, so the
+		// largest 20-octet serial is 2^159-1.
+		pow2 := func(n uint) *big.Int { return new(big.Int).Lsh(big.NewInt(1), n) }
+		tests := []struct {
+			name    string
+			serial  *big.Int
+			wantErr bool
+		}{
+			{name: "accepts 2^159-1, 20 octets", serial: new(big.Int).Sub(pow2(159), big.NewInt(1))},
+			{name: "rejects 2^159, 21 octets with the sign octet", serial: pow2(159), wantErr: true},
+			{name: "rejects 2^161, 21 octets", serial: pow2(161), wantErr: true},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				bundle, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour, pki.WithSerial(tt.serial))
+				if tt.wantErr {
+					assert.ErrorContains(t, err, "20 octets")
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, 0, tt.serial.Cmp(parseCert(t, bundle.CertPEM).SerialNumber))
+			})
+		}
 	})
 
 	t.Run("supports all key algorithms", func(t *testing.T) {
@@ -174,7 +196,7 @@ func TestGeneratePeerCert(t *testing.T) {
 	t.Run("generates a leaf cert signed by CA", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, time.Hour)
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"), pki.WithIPAddresses(net.ParseIP("127.0.0.1")))
 		require.NoError(t, err)
 		assert.NotEmpty(t, leaf.CertPEM)
 		assert.NotEmpty(t, leaf.KeyPEM)
@@ -183,7 +205,7 @@ func TestGeneratePeerCert(t *testing.T) {
 	t.Run("generated cert verifies against CA", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, time.Hour)
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"), pki.WithIPAddresses(net.ParseIP("127.0.0.1")))
 		require.NoError(t, err)
 
 		caPool := x509.NewCertPool()
@@ -205,17 +227,17 @@ func TestGeneratePeerCert(t *testing.T) {
 		t.Parallel()
 
 		bad := pki.Bundle{CertPEM: []byte("not-pem"), KeyPEM: []byte("not-pem")}
-		_, err := pki.GeneratePeerCert(pki.ECDSAP256(), bad, "leaf1", []string{"localhost"}, nil, time.Hour)
+		_, err := pki.GeneratePeerCert(pki.ECDSAP256(), bad, "leaf1", time.Hour, pki.WithDNSNames("localhost"))
 		assert.Error(t, err)
 	})
 
 	t.Run("error when CA bundle is not a CA certificate", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour)
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"))
 		require.NoError(t, err)
 
-		_, err = pki.GeneratePeerCert(pki.ECDSAP256(), leaf, "leaf2", []string{"localhost"}, nil, time.Hour)
+		_, err = pki.GeneratePeerCert(pki.ECDSAP256(), leaf, "leaf2", time.Hour, pki.WithDNSNames("localhost"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not a CA certificate")
 	})
@@ -227,7 +249,7 @@ func TestGeneratePeerCert(t *testing.T) {
 			t.Run(validity.String(), func(t *testing.T) {
 				t.Parallel()
 
-				_, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "peer", []string{"localhost"}, nil, validity)
+				_, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "peer", validity, pki.WithDNSNames("localhost"))
 				assert.ErrorContains(t, err, "validity must be positive")
 			})
 		}
@@ -239,7 +261,7 @@ func TestGeneratePeerCert(t *testing.T) {
 		shortCA, err := pki.GenerateCA(pki.ECDSAP256(), "Short CA", "Test Org", time.Hour)
 		require.NoError(t, err)
 
-		_, err = pki.GeneratePeerCert(pki.ECDSAP256(), shortCA, "leaf1", []string{"localhost"}, nil, 2*time.Hour)
+		_, err = pki.GeneratePeerCert(pki.ECDSAP256(), shortCA, "leaf1", 2*time.Hour, pki.WithDNSNames("localhost"))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "extends beyond CA expiry")
 	})
@@ -247,7 +269,7 @@ func TestGeneratePeerCert(t *testing.T) {
 	t.Run("leaf cert has KeyUsageDigitalSignature", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, time.Hour)
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"), pki.WithIPAddresses(net.ParseIP("127.0.0.1")))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -257,7 +279,7 @@ func TestGeneratePeerCert(t *testing.T) {
 	t.Run("leaf cert has ExtKeyUsageServerAuth and ExtKeyUsageClientAuth", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, time.Hour)
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"), pki.WithIPAddresses(net.ParseIP("127.0.0.1")))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -268,7 +290,7 @@ func TestGeneratePeerCert(t *testing.T) {
 	t.Run("leaf cert is not a CA", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, time.Hour)
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"), pki.WithIPAddresses(net.ParseIP("127.0.0.1")))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -281,7 +303,7 @@ func TestGeneratePeerCert(t *testing.T) {
 		rsaCA, err := pki.GenerateCA(pki.RSA2048(), "RSA CA", "Test Org", 24*time.Hour)
 		require.NoError(t, err)
 
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), rsaCA, "ecdsa-leaf", []string{"localhost"}, nil, time.Hour)
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), rsaCA, "ecdsa-leaf", time.Hour, pki.WithDNSNames("localhost"))
 		require.NoError(t, err)
 
 		caPool := x509.NewCertPool()
@@ -298,7 +320,7 @@ func TestGeneratePeerCert(t *testing.T) {
 	t.Run("leaf cert SANs contain supplied DNS names and IPs", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"leaf1.local", "localhost"}, []net.IP{net.ParseIP("10.0.0.1")}, time.Hour)
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("leaf1.local", "localhost"), pki.WithIPAddresses(net.ParseIP("10.0.0.1")))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -317,7 +339,7 @@ func TestGeneratePeerCert(t *testing.T) {
 	t.Run("returns error when no SANs are provided", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", nil, nil, time.Hour)
+		_, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "SAN")
 	})
@@ -326,7 +348,7 @@ func TestGeneratePeerCert(t *testing.T) {
 		t.Parallel()
 
 		want := big.NewInt(99)
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour, pki.WithSerial(want))
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"), pki.WithSerial(want))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -336,7 +358,7 @@ func TestGeneratePeerCert(t *testing.T) {
 	t.Run("leaf cert has no URI SANs by default", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour)
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -347,7 +369,7 @@ func TestGeneratePeerCert(t *testing.T) {
 		t.Parallel()
 
 		const spiffeID = "spiffe://example.org/service/api"
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour, pki.WithURIs(spiffeID))
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"), pki.WithURIs(spiffeID))
 		require.NoError(t, err)
 
 		// Consumers such as mesh read the identity from URIs[0], preferring it
@@ -361,7 +383,7 @@ func TestGeneratePeerCert(t *testing.T) {
 		t.Parallel()
 
 		want := []string{"spiffe://example.org/service/api", "spiffe://example.org/service/backup", "https://example.org/service"}
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour, pki.WithURIs(want...))
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"), pki.WithURIs(want...))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -375,7 +397,7 @@ func TestGeneratePeerCert(t *testing.T) {
 	t.Run("WithURIs alone satisfies the SAN requirement", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", nil, nil, time.Hour, pki.WithURIs("spiffe://example.org/service/api"))
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithURIs("spiffe://example.org/service/api"))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -404,7 +426,7 @@ func TestGeneratePeerCert(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 
-				_, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", []string{"localhost"}, nil, time.Hour, pki.WithURIs(tt.uri))
+				_, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"), pki.WithURIs(tt.uri))
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.want)
 			})
@@ -425,7 +447,7 @@ func TestGenerateServerCert(t *testing.T) {
 			t.Run(validity.String(), func(t *testing.T) {
 				t.Parallel()
 
-				_, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", []string{"localhost"}, nil, validity)
+				_, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", validity, pki.WithDNSNames("localhost"))
 				assert.ErrorContains(t, err, "validity must be positive")
 			})
 		}
@@ -434,7 +456,7 @@ func TestGenerateServerCert(t *testing.T) {
 	t.Run("has only ExtKeyUsageServerAuth", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", []string{"localhost"}, nil, time.Hour)
+		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", time.Hour, pki.WithDNSNames("localhost"))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -445,7 +467,7 @@ func TestGenerateServerCert(t *testing.T) {
 	t.Run("cert with SANs passes hostname verification", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", []string{"localhost"}, nil, time.Hour)
+		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", time.Hour, pki.WithDNSNames("localhost"))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -455,7 +477,7 @@ func TestGenerateServerCert(t *testing.T) {
 	t.Run("returns error when no SANs are provided", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", nil, nil, time.Hour)
+		_, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", time.Hour)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "SAN")
 	})
@@ -464,7 +486,7 @@ func TestGenerateServerCert(t *testing.T) {
 		t.Parallel()
 
 		const spiffeID = "spiffe://example.org/service/api"
-		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", nil, nil, time.Hour, pki.WithURIs(spiffeID))
+		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", time.Hour, pki.WithURIs(spiffeID))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -476,11 +498,24 @@ func TestGenerateServerCert(t *testing.T) {
 		t.Parallel()
 
 		want := big.NewInt(7)
-		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", []string{"localhost"}, nil, time.Hour, pki.WithSerial(want))
+		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", time.Hour, pki.WithDNSNames("localhost"), pki.WithSerial(want))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
 		assert.Equal(t, 0, want.Cmp(cert.SerialNumber))
+	})
+
+	t.Run("SAN options keep their own copy of the names given", func(t *testing.T) {
+		t.Parallel()
+
+		names := []string{"localhost"}
+		opt := pki.WithDNSNames(names...)
+		names[0] = "changed.example"
+
+		leaf, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", time.Hour, opt)
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"localhost"}, parseCert(t, leaf.CertPEM).DNSNames)
 	})
 
 	t.Run("rejects SANs that would make the certificate unparseable or empty", func(t *testing.T) {
@@ -505,11 +540,11 @@ func TestGenerateServerCert(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 
-				var opts []pki.Option
+				opts := []pki.LeafOption{pki.WithDNSNames(tt.dnsNames...), pki.WithIPAddresses(tt.ips...)}
 				if tt.uri != "" {
 					opts = append(opts, pki.WithURIs(tt.uri))
 				}
-				_, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", tt.dnsNames, tt.ips, time.Hour, opts...)
+				_, err := pki.GenerateServerCert(pki.ECDSAP256(), ca, "server", time.Hour, opts...)
 				require.Error(t, err, "created a certificate that cannot be used")
 				assert.Contains(t, err.Error(), tt.want)
 			})
@@ -530,7 +565,7 @@ func TestGenerateClientCert(t *testing.T) {
 			t.Run(validity.String(), func(t *testing.T) {
 				t.Parallel()
 
-				_, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", nil, nil, validity)
+				_, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", validity)
 				assert.ErrorContains(t, err, "validity must be positive")
 			})
 		}
@@ -539,7 +574,7 @@ func TestGenerateClientCert(t *testing.T) {
 	t.Run("has only ExtKeyUsageClientAuth", func(t *testing.T) {
 		t.Parallel()
 
-		leaf, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", nil, nil, time.Hour)
+		leaf, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", time.Hour)
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -551,7 +586,7 @@ func TestGenerateClientCert(t *testing.T) {
 		t.Parallel()
 
 		const spiffeID = "spiffe://example.org/service/cli"
-		leaf, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", nil, nil, time.Hour, pki.WithURIs(spiffeID))
+		leaf, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", time.Hour, pki.WithURIs(spiffeID))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)
@@ -563,7 +598,7 @@ func TestGenerateClientCert(t *testing.T) {
 		t.Parallel()
 
 		want := big.NewInt(1000)
-		leaf, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", nil, nil, time.Hour, pki.WithSerial(want))
+		leaf, err := pki.GenerateClientCert(pki.ECDSAP256(), ca, "client", time.Hour, pki.WithSerial(want))
 		require.NoError(t, err)
 
 		cert := parseCert(t, leaf.CertPEM)

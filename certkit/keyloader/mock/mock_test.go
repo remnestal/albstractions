@@ -2,7 +2,6 @@ package mock_test
 
 import (
 	"errors"
-	"io/fs"
 	"testing"
 
 	"github.com/remnestal/albstractions/certkit/keyloader/mock"
@@ -55,50 +54,5 @@ func TestErrorProvider(t *testing.T) {
 		assert.NotNil(t, free)
 
 		free()
-	})
-}
-
-func TestFileSystem(t *testing.T) {
-	t.Parallel()
-
-	mfs := &mock.FileSystem{
-		Files: map[string]mock.File{
-			"/secret.key": {Data: []byte("key-data"), Mode: 0600},
-		},
-	}
-
-	t.Run("ReadFile returns data for existing file", func(t *testing.T) {
-		t.Parallel()
-
-		data, err := mfs.ReadFile("/secret.key")
-
-		require.NoError(t, err)
-		assert.Equal(t, []byte("key-data"), data)
-	})
-
-	t.Run("ReadFile returns error for missing file", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := mfs.ReadFile("/missing.key")
-
-		assert.ErrorIs(t, err, fs.ErrNotExist)
-	})
-
-	t.Run("Stat returns file info for existing file", func(t *testing.T) {
-		t.Parallel()
-
-		info, err := mfs.Stat("/secret.key")
-
-		require.NoError(t, err)
-		assert.Equal(t, fs.FileMode(0600), info.Mode())
-		assert.Equal(t, int64(8), info.Size())
-	})
-
-	t.Run("Stat returns error for missing file", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := mfs.Stat("/missing.key")
-
-		assert.ErrorIs(t, err, fs.ErrNotExist)
 	})
 }

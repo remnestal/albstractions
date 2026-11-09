@@ -35,6 +35,11 @@ exactly what it rejected before. The alternative, requiring a DNS name or IP
 alongside every SPIFFE ID, would force callers to invent a filler hostname that
 nothing verifies against.
 
+That holds for a client leaf. A server leaf is verified by the dialling client,
+and a stock TLS client, including one configured by `mtls`, matches the dialled
+DNS name or IP address and never a URI SAN. A URI-only server therefore fails
+the handshake unless its clients verify the URI themselves.
+
 ## URIs are rejected, never rewritten
 
 `url.Parse` alone is not sufficient validation. It is permissive enough to
@@ -51,7 +56,7 @@ downstream authorization allowlists on, that is the worst possible failure mode.
 - **Non-ASCII**: URI SANs are encoded as `IA5String`, and a non-ASCII byte
   produces a certificate other implementations reject or read back differently.
 - **Anything that fails `u.String() == raw`**: an unescaped space, an uppercase
-  scheme that `url.Parse` would lowercase, a redundantly encoded octet. The
+  scheme that `url.Parse` would lowercase, an escaped letter in userinfo. The
   caller gets an error naming the form that *would* have been issued.
 
 A fourth class is caught after creation rather than by `resolveURIs`: a host
@@ -71,9 +76,16 @@ property of the API rather than a hope.
 - **Parse with no validation beyond the error return**: rejected as barely more
   than no validation at all, for the reasons above.
 
+The round-trip check does not reject every redundant escape. `url.URL` keeps a
+valid escaped path as written, and the query and fragment are stored raw, so
+`spiffe://example.org/%41`, `%7E` and `%2f` round-trip and are issued verbatim,
+which the guarantee permits: the certificate carries exactly the bytes passed.
+In the host, `url.Parse` itself refuses one: `spiffe://ex%41mple.org/` fails
+with `invalid URL escape`.
+
 ## Scope
 
-`WithURIs` is shared with `GenerateCA` through `certConfig` but is ignored
-there, documented the same way `WithMaxPathLen` documents its inverse. Trust
+`WithURIs` is a `LeafOption`, so passing it to `GenerateCA` does not compile,
+just as `WithMaxPathLen`, a `CAOption`, cannot reach a leaf. Trust
 domains, SPIFFE-specific validation, and SPIRE integration are all out of scope:
 `certkit` issues a URI SAN, it does not interpret one.

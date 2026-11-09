@@ -20,6 +20,7 @@ import (
 	"math/big"
 	"net"
 	"net/url"
+	"slices"
 	"time"
 	"unicode"
 )
@@ -107,38 +108,89 @@ func mldsaKey(params mldsa.Parameters) KeyAlgorithm {
 	}
 }
 
-// Option configures certificate generation.
-type Option func(*certConfig)
+// CAOption configures [GenerateCA].
+type CAOption interface {
+	applyCA(c *certConfig)
+}
+
+// LeafOption configures [GenerateServerCert], [GenerateClientCert] and
+// [GeneratePeerCert].
+type LeafOption interface {
+	applyLeaf(c *certConfig)
+}
+
+// Option configures any certificate: it is both a [CAOption] and a
+// [LeafOption].
+type Option interface {
+	CAOption
+	LeafOption
+}
 
 type certConfig struct {
 	maxPathLen     int
 	maxPathLenZero bool
 	serial         *big.Int
+	dnsNames       []string
+	ips            []net.IP
 	uris           []string
 }
+
+type caOption func(*certConfig)
+
+func (o caOption) applyCA(c *certConfig) { o(c) }
+
+type leafOption func(*certConfig)
+
+func (o leafOption) applyLeaf(c *certConfig) { o(c) }
+
+type option func(*certConfig)
+
+func (o option) applyCA(c *certConfig)   { o(c) }
+func (o option) applyLeaf(c *certConfig) { o(c) }
 
 // WithMaxPathLen sets the maximum CA chain depth.
 //
 // A value of 0 enforces a single-level hierarchy (no intermediate CAs); this
 // is the default.
-//
-// WithMaxPathLen is ignored when passed to leaf certificate functions.
-func WithMaxPathLen(n int) Option {
-	return func(c *certConfig) {
+func WithMaxPathLen(n int) CAOption {
+	return caOption(func(c *certConfig) {
 		c.maxPathLen = n
 		c.maxPathLenZero = n == 0
-	}
+	})
 }
 
 // WithSerial sets a fixed serial number for the generated certificate.
 //
-// serial must be a positive integer whose absolute value fits within 20
-// octets (RFC 5280 §4.1.2.2). If not set, a cryptographically random 128-bit
-// serial is used.
+// serial must be a positive integer of at most 20 octets when DER-encoded
+// (RFC 5280 §4.1.2.2), so at most 159 bits: DER prefixes a zero octet to any
+// value whose top bit is set, which makes 2^159 a 21-octet INTEGER.
+//
+// If not set, a cryptographically random 128-bit serial is used.
 func WithSerial(serial *big.Int) Option {
-	return func(c *certConfig) {
+	return option(func(c *certConfig) {
 		c.serial = serial
-	}
+	})
+}
+
+// WithDNSNames sets the DNS name SANs of the generated leaf.
+//
+// Every name must be non-empty.
+func WithDNSNames(names ...string) LeafOption {
+	names = slices.Clone(names)
+	return leafOption(func(c *certConfig) {
+		c.dnsNames = names
+	})
+}
+
+// WithIPAddresses sets the IP address SANs of the generated leaf.
+//
+// Every address must be 4 or 16 bytes long, which rules out the nil a failed
+// [net.ParseIP] returns.
+func WithIPAddresses(ips ...net.IP) LeafOption {
+	ips = slices.Clone(ips)
+	return leafOption(func(c *certConfig) {
+		c.ips = ips
+	})
 }
 
 // WithURIs sets the URI SANs of the generated certificate, preserving the
@@ -154,12 +206,11 @@ func WithSerial(serial *big.Int) Option {
 //
 // A URI SAN satisfies the requirement that a server or peer certificate carry
 // at least one SAN, so a leaf may be issued with no DNS name or IP address.
-//
-// WithURIs is ignored when passed to [GenerateCA].
-func WithURIs(uris ...string) Option {
-	return func(c *certConfig) {
+func WithURIs(uris ...string) LeafOption {
+	uris = slices.Clone(uris)
+	return leafOption(func(c *certConfig) {
 		c.uris = uris
-	}
+	})
 }
 
 // GenerateCA creates a self-signed CA certificate using the given algorithm.
@@ -168,7 +219,7 @@ func WithURIs(uris ...string) Option {
 //
 // validity must be > 0; a zero or negative duration is rejected rather than
 // issuing an already-expired certificate.
-func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Duration, opts ...Option) (Bundle, error) {
+func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Duration, opts ...CAOption) (Bundle, error) {
 	if validity <= 0 {
 		return Bundle{}, fmt.Errorf("validity must be positive, got %s", validity)
 	}
@@ -177,7 +228,7 @@ func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Du
 		maxPathLenZero: true,
 	}
 	for _, opt := range opts {
-		opt(cfg)
+		opt.applyCA(cfg)
 	}
 
 	privateKey, err := algorithm()
@@ -226,59 +277,55 @@ func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Du
 // GenerateServerCert creates a leaf certificate for server authentication,
 // signed by the given CA.
 //
-// Every DNS name must be non-empty and every IP address 4 or 16 bytes long
-// (a failed [net.ParseIP] returns nil). The created certificate is parsed
-// back before it is returned, so a SAN that crypto/x509 cannot read is an
-// error here rather than at load time.
+// SANs are set with [WithDNSNames], [WithIPAddresses] and [WithURIs]. The
+// created certificate is parsed back before it is returned, so a SAN that
+// crypto/x509 cannot read is an error here rather than at load time.
 //
-// At least one SAN must be provided, either as a DNS name, an IP address, or a
-// URI via [WithURIs].
+// At least one SAN must be provided: a DNS name, an IP address, or a URI.
 //
 // validity must be > 0; a zero or negative duration is rejected rather than
 // issuing an already-expired certificate.
-func GenerateServerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
-	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, opts...)
+func GenerateServerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, validity time.Duration, opts ...LeafOption) (Bundle, error) {
+	return generateCert(algorithm, ca, commonName, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, opts...)
 }
 
 // GenerateClientCert creates a leaf certificate for client authentication,
 // signed by the given CA.
 //
-// Every DNS name must be non-empty and every IP address 4 or 16 bytes long
-// (a failed [net.ParseIP] returns nil). The created certificate is parsed
-// back before it is returned, so a SAN that crypto/x509 cannot read is an
-// error here rather than at load time.
+// SANs are set with [WithDNSNames], [WithIPAddresses] and [WithURIs]. The
+// created certificate is parsed back before it is returned, so a SAN that
+// crypto/x509 cannot read is an error here rather than at load time.
 //
 // validity must be > 0; a zero or negative duration is rejected rather than
 // issuing an already-expired certificate.
-func GenerateClientCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
-	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, opts...)
+func GenerateClientCert(algorithm KeyAlgorithm, ca Bundle, commonName string, validity time.Duration, opts ...LeafOption) (Bundle, error) {
+	return generateCert(algorithm, ca, commonName, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, opts...)
 }
 
 // GeneratePeerCert creates a leaf certificate for mutual TLS, valid for both
 // server and client authentication, signed by the given CA.
 //
-// Every DNS name must be non-empty and every IP address 4 or 16 bytes long
-// (a failed [net.ParseIP] returns nil). The created certificate is parsed
-// back before it is returned, so a SAN that crypto/x509 cannot read is an
-// error here rather than at load time.
+// SANs are set with [WithDNSNames], [WithIPAddresses] and [WithURIs]. The
+// created certificate is parsed back before it is returned, so a SAN that
+// crypto/x509 cannot read is an error here rather than at load time.
 //
-// At least one SAN must be provided, either as a DNS name, an IP address, or a
-// URI via [WithURIs].
+// At least one SAN must be provided: a DNS name, an IP address, or a URI.
 //
 // validity must be > 0; a zero or negative duration is rejected rather than
 // issuing an already-expired certificate.
-func GeneratePeerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, opts ...Option) (Bundle, error) {
-	return generateCert(algorithm, ca, commonName, dnsNames, ips, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, opts...)
+func GeneratePeerCert(algorithm KeyAlgorithm, ca Bundle, commonName string, validity time.Duration, opts ...LeafOption) (Bundle, error) {
+	return generateCert(algorithm, ca, commonName, validity, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, opts...)
 }
 
-func generateCert(algorithm KeyAlgorithm, ca Bundle, commonName string, dnsNames []string, ips []net.IP, validity time.Duration, extKeyUsage []x509.ExtKeyUsage, opts ...Option) (Bundle, error) {
+func generateCert(algorithm KeyAlgorithm, ca Bundle, commonName string, validity time.Duration, extKeyUsage []x509.ExtKeyUsage, opts ...LeafOption) (Bundle, error) {
 	if validity <= 0 {
 		return Bundle{}, fmt.Errorf("validity must be positive, got %s", validity)
 	}
 	cfg := &certConfig{}
 	for _, opt := range opts {
-		opt(cfg)
+		opt.applyLeaf(cfg)
 	}
+	dnsNames, ips := cfg.dnsNames, cfg.ips
 
 	uris, err := resolveURIs(cfg)
 	if err != nil {
@@ -402,8 +449,10 @@ func resolveSerial(cfg *certConfig) (*big.Int, error) {
 	if cfg.serial.Sign() <= 0 {
 		return nil, fmt.Errorf("serial must be a positive integer")
 	}
-	if len(cfg.serial.Bytes()) > 20 {
-		return nil, fmt.Errorf("serial exceeds maximum length of 20 octets (RFC 5280)")
+	// Bytes drops DER's sign octet, so measure in bits: a 160-bit value encodes
+	// to 21 octets.
+	if cfg.serial.BitLen() > 159 {
+		return nil, fmt.Errorf("serial exceeds maximum length of 20 octets when DER-encoded (RFC 5280)")
 	}
 	return cfg.serial, nil
 }
