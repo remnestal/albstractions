@@ -189,6 +189,11 @@ func TestFromFile(t *testing.T) {
 			{"group readable", 0640},
 			{"world writable", 0606},
 			{"group writable", 0660},
+			// A single write or execute bit, with no read bit to fall back on.
+			{"group writable only", 0620},
+			{"group executable only", 0610},
+			{"world writable only", 0602},
+			{"world executable only", 0601},
 		}
 
 		for _, tt := range tests {
@@ -202,10 +207,9 @@ func TestFromFile(t *testing.T) {
 				provider := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs))
 				key, free, err := provider()
 
-				assert.Error(t, err)
+				assert.ErrorContains(t, err, "insecure permissions")
 				assert.Nil(t, key)
 				assert.NotNil(t, free)
-				assert.Contains(t, err.Error(), "insecure permissions")
 			})
 		}
 	})
@@ -348,6 +352,48 @@ func TestDecode(t *testing.T) {
 			free()
 		}
 		assert.Equal(t, []byte("key"), source)
+	})
+
+	t.Run("frees the source's key once it is decoded", func(t *testing.T) {
+		t.Parallel()
+
+		mfs := fstest.MapFS{
+			"key.txt": &fstest.MapFile{Data: []byte(hex.EncodeToString([]byte("my-secret-key"))), Mode: 0600},
+		}
+		var read []byte
+		source := func() ([]byte, func(), error) {
+			key, free, err := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs))()
+			read = key
+			return key, free, err
+		}
+
+		key, free, err := keyloader.Hex(source)()
+		defer free()
+
+		// The decoded key is a separate buffer, so the bytes read from the
+		// file must be zeroed already, before free is called.
+		require.NoError(t, err)
+		assert.Equal(t, []byte("my-secret-key"), key)
+		assert.Equal(t, make([]byte, len(read)), read)
+	})
+
+	t.Run("zeroes its copy of the encoded key and the decoder's result", func(t *testing.T) {
+		t.Parallel()
+
+		var input, output []byte
+		spy := func(encoded []byte) ([]byte, error) {
+			input = encoded
+			output = bytes.ToUpper(encoded)
+			return output, nil
+		}
+
+		key, free, err := keyloader.Decode(mock.StaticProvider([]byte("key")), spy)()
+		defer free()
+
+		require.NoError(t, err)
+		assert.Equal(t, []byte("KEY"), key)
+		assert.Equal(t, make([]byte, 3), input)
+		assert.Equal(t, make([]byte, 3), output)
 	})
 
 	t.Run("zeros a partly decoded key when the decoder fails", func(t *testing.T) {

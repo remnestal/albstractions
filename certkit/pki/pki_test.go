@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"net"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/certkit/pki"
@@ -184,6 +185,41 @@ func TestGenerateCA(t *testing.T) {
 				assert.NotEmpty(t, bundle.KeyPEM)
 			})
 		}
+	})
+
+	t.Run("CA cert is back-dated one minute", func(t *testing.T) {
+		t.Parallel()
+
+		// The bubble's clock starts on a whole second and stands still, so the
+		// one-minute offset survives x509's truncation to seconds exactly.
+		synctest.Test(t, func(t *testing.T) {
+			want := time.Now().Add(-time.Minute)
+
+			bundle, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour)
+			require.NoError(t, err)
+
+			cert := parseCert(t, bundle.CertPEM)
+			assert.WithinDuration(t, want, cert.NotBefore, 0)
+		})
+	})
+
+	t.Run("uses a distinct positive random serial of at most 20 octets by default", func(t *testing.T) {
+		t.Parallel()
+
+		first, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour)
+		require.NoError(t, err)
+		second, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour)
+		require.NoError(t, err)
+
+		a := parseCert(t, first.CertPEM).SerialNumber
+		b := parseCert(t, second.CertPEM).SerialNumber
+		assert.Positive(t, a.Sign(), "serial must be positive")
+		assert.Positive(t, b.Sign(), "serial must be positive")
+		// RFC 5280 caps serials at 20 octets when DER-encoded, which leaves
+		// 159 bits once DER's sign octet is counted.
+		assert.LessOrEqual(t, a.BitLen(), 159)
+		assert.LessOrEqual(t, b.BitLen(), 159)
+		assert.NotEqual(t, 0, a.Cmp(b), "two CAs got the same serial %s", a)
 	})
 }
 
@@ -419,7 +455,8 @@ func TestGeneratePeerCert(t *testing.T) {
 			{name: "scheme-less authority", uri: "example.org/service/api", want: "not absolute"},
 			{name: "non-ASCII", uri: "spiffe://example.org/service/äpi", want: "non-ASCII"},
 			{name: "unescaped space", uri: "spiffe://example.org/service/a pi", want: "normalised form"},
-			{name: "control character", uri: "spiffe://example.org/service/\x7f", want: "URI SAN"},
+			{name: "uppercase scheme", uri: "SPIFFE://example.org/service/api", want: "normalised form"},
+			{name: "control character", uri: "spiffe://example.org/service/\x7f", want: "invalid control character"},
 		}
 
 		for _, tt := range tests {
@@ -431,6 +468,36 @@ func TestGeneratePeerCert(t *testing.T) {
 				assert.Contains(t, err.Error(), tt.want)
 			})
 		}
+	})
+
+	t.Run("leaf cert is back-dated one minute", func(t *testing.T) {
+		t.Parallel()
+
+		// The bubble's clock starts on a whole second and stands still, so the
+		// one-minute offset survives x509's truncation to seconds exactly.
+		synctest.Test(t, func(t *testing.T) {
+			want := time.Now().Add(-time.Minute)
+
+			ca, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", 24*time.Hour)
+			require.NoError(t, err)
+			leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"))
+			require.NoError(t, err)
+
+			cert := parseCert(t, leaf.CertPEM)
+			assert.WithinDuration(t, want, cert.NotBefore, 0)
+		})
+	})
+
+	t.Run("leaf cert inherits the CA's organization", func(t *testing.T) {
+		t.Parallel()
+
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"))
+		require.NoError(t, err)
+
+		// Compare with the literal org given to GenerateCA: an empty CA
+		// organization would match an empty leaf one.
+		cert := parseCert(t, leaf.CertPEM)
+		assert.Equal(t, []string{"Test Org"}, cert.Subject.Organization)
 	})
 }
 

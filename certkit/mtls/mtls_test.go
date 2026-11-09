@@ -217,7 +217,8 @@ func TestMTLSIntegration(t *testing.T) {
 		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, err := w.Write([]byte("mTLS success"))
-			require.NoError(t, err)
+			// The handler runs on a server goroutine, where FailNow is unsupported.
+			assert.NoError(t, err)
 		}))
 		srv.TLS = serverTLSConfig
 		srv.StartTLS()
