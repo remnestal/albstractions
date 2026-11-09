@@ -15,20 +15,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// closerCache is a Memory that records how many times it is closed, used to
-// verify that Sharded.Close cascades to its backends.
+// closerCache is a Memory that records how many times it is closed and then
+// returns err, used to verify that Sharded.Close cascades to its backends.
 type closerCache struct {
 	*cache.Memory[string, int]
 	closes *atomic.Int64
+	err    error
 }
 
 func (c closerCache) Close() error {
 	c.closes.Add(1)
-	return c.Memory.Close()
+	if err := c.Memory.Close(); err != nil {
+		return err
+	}
+	return c.err
 }
 
 func memoryShards[K comparable, V any]() func() cache.Cache[K, V] {
 	return func() cache.Cache[K, V] { return cache.NewMemory[K, V]() }
+}
+
+// trackedShards is like memoryShards but also returns the backends it builds.
+// NewSharded calls the constructor once per shard in index order, so the slice
+// index is the shard index.
+func trackedShards[K comparable, V any]() (func() cache.Cache[K, V], *[]*cache.Memory[K, V]) {
+	var backends []*cache.Memory[K, V]
+	return func() cache.Cache[K, V] {
+		m := cache.NewMemory[K, V]()
+		backends = append(backends, m)
+		return m
+	}, &backends
 }
 
 func TestHashShard(t *testing.T) {
@@ -48,6 +64,22 @@ func TestHashShard(t *testing.T) {
 		v, ok := s.Get("k")
 		assert.True(t, ok)
 		assert.Equal(t, 1, v)
+	})
+
+	t.Run("spreads keys across more than one backend", func(t *testing.T) {
+		t.Parallel()
+		newShard, backends := trackedShards[int, int]()
+		s := cache.NewSharded[int, int](8, cache.HashShard[int](), newShard)
+		for i := range 100 {
+			s.Set(i, i, cache.Never)
+		}
+		used := 0
+		for _, b := range *backends {
+			if len(maps.Collect(b.Items())) > 0 {
+				used++
+			}
+		}
+		assert.Greater(t, used, 1)
 	})
 }
 
@@ -70,6 +102,26 @@ func TestModuloShard(t *testing.T) {
 			v, ok := s.Get(i)
 			require.True(t, ok)
 			assert.Equal(t, i*2, v)
+		}
+	})
+
+	t.Run("sends key i to backend i modulo size", func(t *testing.T) {
+		t.Parallel()
+		const size = 8
+		newShard, backends := trackedShards[int, int]()
+		s := cache.NewSharded[int, int](size, cache.ModuloShard[int](), newShard)
+		for i := range 100 {
+			s.Set(i, i, cache.Never)
+		}
+		require.Len(t, *backends, size)
+		for j, b := range *backends {
+			for k := range b.Items() {
+				assert.Equal(t, j, k%size, "key %d is in backend %d", k, j)
+			}
+		}
+		for i := range 100 {
+			_, ok := (*backends)[i%size].Get(i)
+			assert.True(t, ok, "key %d is missing from backend %d", i, i%size)
 		}
 	})
 }
@@ -213,6 +265,32 @@ func TestSharded_ItemsContext(t *testing.T) {
 		}
 		assert.ErrorIs(t, errf(), boom)
 	})
+
+	t.Run("stops at the first backend error", func(t *testing.T) {
+		t.Parallel()
+		boom := errors.New("scan failed")
+		healthy := cache.NewMemory[int, int]()
+		healthy.Set(1, 1, cache.Never)
+		backends := []cache.Cache[int, int]{
+			&mock.Backend[int, int]{
+				ItemsContextFunc: func(context.Context) (iter.Seq2[int, int], func() error) {
+					return func(func(int, int) bool) {}, func() error { return boom }
+				},
+			},
+			healthy,
+		}
+		next := 0
+		s := cache.NewSharded[int, int](len(backends), cache.ModuloShard[int](), func() cache.Cache[int, int] {
+			b := backends[next]
+			next++
+			return b
+		})
+
+		seq, errf := s.ItemsContext(t.Context())
+		got := maps.Collect(seq)
+		assert.Empty(t, got, "no backend after the failing one may be visited")
+		assert.ErrorIs(t, errf(), boom)
+	})
 }
 
 func TestSharded_Close(t *testing.T) {
@@ -226,6 +304,25 @@ func TestSharded_Close(t *testing.T) {
 		})
 		require.NoError(t, s.Close())
 		assert.Equal(t, int64(3), closes.Load())
+	})
+
+	t.Run("joins every backend error and still closes them all", func(t *testing.T) {
+		t.Parallel()
+		errA, errB := errors.New("close a"), errors.New("close b")
+		errs := []error{errA, nil, errB}
+		var closes atomic.Int64
+		next := 0
+		s := cache.NewSharded[string, int](len(errs), cache.HashShard[string](), func() cache.Cache[string, int] {
+			c := closerCache{Memory: cache.NewMemory[string, int](), closes: &closes, err: errs[next]}
+			next++
+			return c
+		})
+
+		err := s.Close()
+		require.Error(t, err)
+		assert.ErrorIs(t, err, errA)
+		assert.ErrorIs(t, err, errB)
+		assert.Equal(t, int64(len(errs)), closes.Load())
 	})
 
 	t.Run("skips backends that are not io.Closer", func(t *testing.T) {

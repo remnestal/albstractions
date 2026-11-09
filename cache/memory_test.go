@@ -16,7 +16,7 @@ import (
 func TestNewMemory(t *testing.T) {
 	t.Parallel()
 
-	t.Run("zero value is usable", func(t *testing.T) {
+	t.Run("a default Memory stores and returns values", func(t *testing.T) {
 		t.Parallel()
 		c := cache.NewMemory[string, int]()
 		exp := c.Set("k", 1, cache.Never)

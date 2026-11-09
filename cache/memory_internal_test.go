@@ -196,11 +196,17 @@ func TestMemoryBackgroundRebuild(t *testing.T) {
 		m := NewMemory[string, int](WithRebuildInterval(5 * time.Millisecond))
 		defer func() { _ = m.Close() }()
 		m.Set("dead", 1, After(time.Nanosecond))
+		m.mu.RLock()
+		old := m.m
+		m.mu.RUnlock()
 		time.Sleep(5 * time.Millisecond)
 		synctest.Wait()
 
 		m.mu.RLock()
 		defer m.mu.RUnlock()
 		assert.Empty(t, m.m)
+		// The original map is left untouched, proving the tick rebuilt the map
+		// rather than cleaning it in place.
+		assert.Len(t, old, 1)
 	})
 }
