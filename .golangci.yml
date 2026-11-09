@@ -12,6 +12,10 @@ linters:
     - usetesting # t.TempDir(), t.Setenv() and friends over os equivalents
     - testifylint # testify misuse, including require off the test goroutine
   settings:
+    usetesting:
+      # Off by default. Tests use t.Context() for contexts they own.
+      context-background: true
+      context-todo: true
     testifylint:
       disable:
         # House style uses assert for checks the rest of the test survives.
@@ -19,16 +23,3 @@ linters:
       expected-actual:
         # The default also matches `exp`, which here names an expiry.
         pattern: (^(expected|want(ed)?)([A-Z]\w*)?$)|(^(\w*[a-z])?(Expected|Want(ed)?)$)
-  exclusions:
-    rules:
-      # Findings in lines that unmerged branches rewrite. Drop each rule once
-      # its branches land, fixing the lifecycle sites on top of #22 and #25.
-      - path: mtls/mtls_test\.go # #24
-        linters: [testifylint]
-        text: "go-require:"
-      - path: roundtripper_test\.go # #28
-        linters: [testifylint]
-        text: "go-require:"
-      - path: lifecycle_test\.go # #22, #25
-        linters: [testifylint]
-        text: "error-nil:"
