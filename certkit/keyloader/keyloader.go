@@ -97,6 +97,14 @@ type FileOption func(*fileConfig)
 // must be valid there: an [io/fs] path is unrooted and slash-separated, such
 // as "keys/tls.key". [testing/fstest.MapFS] serves files with a mode from
 // memory, for testing the permission check.
+//
+// Pass the [os.Root.FS] of an [*os.Root] to confine key reads to one
+// directory. A path that leaves it through ".." or a symbolic link is
+// rejected, and so is an absolute symbolic link, even one that points back
+// inside. Open follows symbolic links, so the permission check applies to a
+// link's target. See [os.Root] for the limits of this confinement.
+//
+// The root must stay open for as long as the provider may be called.
 func WithFilesystem(filesystem fs.FS) FileOption {
 	return func(c *fileConfig) {
 		c.filesystem = filesystem

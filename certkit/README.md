@@ -87,6 +87,27 @@ free() // the key is no longer needed; do not wait for the deferred call
 
 `FromFile` refuses to read a file whose mode is looser than `0600`. Pass `WithoutPermissionCheck` to opt out where the platform makes that impractical, such as Windows, which reports every file as `0666`, or `0444` when read-only. The file is opened once and both the check and the read use that handle, so a file swapped in between cannot slip past the check.
 
+## Directory confinement
+
+The file system of an `*os.Root` resolves every path inside one directory, so passing `root.FS()` to `WithFilesystem` confines key reads to it. A path that leaves it, through `..` or a symbolic link pointing outside, is rejected, and the `0600` check still runs on the key. The certificate and CA are public, so they skip that check.
+
+```go
+root, err := os.OpenRoot("/etc/myservice")
+if err != nil {
+    return err
+}
+defer root.Close()
+
+fsys := root.FS()
+tlsCfg, err := mtls.NewTLSConfig(
+    keyloader.FromFile("cert.pem", keyloader.WithFilesystem(fsys), keyloader.WithoutPermissionCheck()),
+    keyloader.FromFile("key.pem", keyloader.WithFilesystem(fsys)),
+    keyloader.FromFile("ca.pem", keyloader.WithFilesystem(fsys), keyloader.WithoutPermissionCheck()),
+)
+```
+
+Paths are relative to the root: an absolute path is rejected even when it points inside it. A provider reads when it is called, not when it is built, so the root must stay open until the last call; `NewTLSConfig` has loaded all three by the time it returns its config.
+
 ## Options
 
 ### `keyloader`
@@ -96,7 +117,7 @@ free() // the key is no longer needed; do not wait for the deferred call
 | `Hex(p)` / `Base64(p)` | any provider | Hex- or base64-decode the key from `p`, skipping ASCII space, tab, CR and LF |
 | `Decode(p, d)` | any provider | Decode the key from `p` with a custom `Decoder`, which receives the value unchanged |
 | `WithEnvGetter(fn)` | env | Read variables through fn instead of `os.Getenv` |
-| `WithFilesystem(fsys)` | file | Open the file through an `fs.FS` instead of the OS |
+| `WithFilesystem(fsys)` | file | Open the file through an `fs.FS` instead of the OS, such as `root.FS()` to confine reads to one directory |
 | `WithoutPermissionCheck()` | file | Skip the `0600`-or-stricter mode check |
 
 ### `pki`
