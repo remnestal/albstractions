@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,18 +27,12 @@ func (c *closeRecorder) Close() error {
 	return nil
 }
 
-func newTestServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
-	t.Cleanup(srv.Close)
-	return srv
-}
+// testURL is the address every test requests. Each test injects a fake inner
+// transport, so nothing is ever dialled.
+const testURL = "http://example.test/"
 
 func TestRoundTripper_spacing(t *testing.T) {
 	t.Parallel()
-	// The server is never dialled; it must stay outside the bubble, whose clock
-	// would never advance past a goroutine blocked in Accept.
-	srv := newTestServer(t)
 	synctest.Test(t, func(t *testing.T) {
 		delay := 40 * time.Millisecond
 
@@ -61,7 +54,7 @@ func TestRoundTripper_spacing(t *testing.T) {
 
 		const n = 4
 		for range n {
-			resp, err := client.Get(srv.URL)
+			resp, err := client.Get(testURL)
 			require.NoError(t, err)
 			require.NoError(t, resp.Body.Close())
 		}
@@ -75,9 +68,6 @@ func TestRoundTripper_spacing(t *testing.T) {
 
 func TestRoundTripper_contextCancel(t *testing.T) {
 	t.Parallel()
-	// The server is never dialled; it must stay outside the bubble, whose clock
-	// would never advance past a goroutine blocked in Accept.
-	srv := newTestServer(t)
 	synctest.Test(t, func(t *testing.T) {
 		var called atomic.Int32
 		rt := throttle.NewRoundTripper(
@@ -91,7 +81,7 @@ func TestRoundTripper_contextCancel(t *testing.T) {
 		client := &http.Client{Transport: rt}
 
 		// First request fires immediately.
-		resp, err := client.Get(srv.URL)
+		resp, err := client.Get(testURL)
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 
@@ -99,7 +89,7 @@ func TestRoundTripper_contextCancel(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 		defer cancel()
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL, nil)
 		require.NoError(t, err)
 
 		_, err = client.Do(req)
@@ -110,9 +100,6 @@ func TestRoundTripper_contextCancel(t *testing.T) {
 
 func TestRoundTripper_concurrentCallersSerialised(t *testing.T) {
 	t.Parallel()
-	// The server is never dialled; it must stay outside the bubble, whose clock
-	// would never advance past a goroutine blocked in Accept.
-	srv := newTestServer(t)
 	synctest.Test(t, func(t *testing.T) {
 		pt := &peakTracker{}
 		release := make(chan struct{})
@@ -133,7 +120,7 @@ func TestRoundTripper_concurrentCallersSerialised(t *testing.T) {
 		for range n {
 			go func() {
 				defer wg.Done()
-				resp, err := client.Get(srv.URL)
+				resp, err := client.Get(testURL)
 				if assert.NoError(t, err) {
 					assert.NoError(t, resp.Body.Close())
 				}
@@ -150,9 +137,6 @@ func TestRoundTripper_concurrentCallersSerialised(t *testing.T) {
 
 func TestRoundTripper_withMaxInflight(t *testing.T) {
 	t.Parallel()
-	// The server is never dialled; it must stay outside the bubble, whose clock
-	// would never advance past a goroutine blocked in Accept.
-	srv := newTestServer(t)
 	synctest.Test(t, func(t *testing.T) {
 		const cap = 2
 		pt := &peakTracker{}
@@ -175,7 +159,7 @@ func TestRoundTripper_withMaxInflight(t *testing.T) {
 		for range n {
 			go func() {
 				defer wg.Done()
-				resp, err := client.Get(srv.URL)
+				resp, err := client.Get(testURL)
 				if assert.NoError(t, err) {
 					assert.NoError(t, resp.Body.Close())
 				}
@@ -220,7 +204,7 @@ func TestRoundTripper_RoundTrip(t *testing.T) {
 			rt := throttle.NewRoundTripper(forwardingTransport(&forwarded, nil), constSchedule(time.Hour))
 
 			// The first request passes immediately and pushes the next slot an hour out.
-			first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.test/", nil)
+			first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testURL, nil)
 			require.NoError(t, err)
 			_, err = rt.RoundTrip(first)
 			require.NoError(t, err)
@@ -228,7 +212,7 @@ func TestRoundTripper_RoundTrip(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			body := &closeRecorder{Reader: strings.NewReader("payload")}
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.test/", body)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, testURL, body)
 			require.NoError(t, err)
 
 			_, err = rt.RoundTrip(req)
@@ -248,7 +232,7 @@ func TestRoundTripper_RoundTrip(t *testing.T) {
 			// The first request holds the only in-flight slot until released.
 			var wg sync.WaitGroup
 			wg.Go(func() {
-				first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.test/", nil)
+				first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testURL, nil)
 				if assert.NoError(t, err) {
 					_, err = rt.RoundTrip(first)
 					assert.NoError(t, err)
@@ -259,7 +243,7 @@ func TestRoundTripper_RoundTrip(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			body := &closeRecorder{Reader: strings.NewReader("payload")}
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.test/", body)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, testURL, body)
 			require.NoError(t, err)
 
 			_, err = rt.RoundTrip(req)
