@@ -85,7 +85,7 @@ with `invalid URL escape`.
 
 ## Scope
 
-`WithURIs` is shared with `GenerateCA` through `certConfig` but is ignored
-there, documented the same way `WithMaxPathLen` documents its inverse. Trust
+`WithURIs` is a `LeafOption`, so passing it to `GenerateCA` does not compile,
+just as `WithMaxPathLen`, a `CAOption`, cannot reach a leaf. Trust
 domains, SPIFFE-specific validation, and SPIRE integration are all out of scope:
 `certkit` issues a URI SAN, it does not interpret one.

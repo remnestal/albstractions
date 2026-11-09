@@ -33,7 +33,7 @@ func generateTestCA(t *testing.T) pki.Bundle {
 
 func generateTestCert(t *testing.T, commonName string, ca pki.Bundle) pki.Bundle {
 	t.Helper()
-	bundle, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, commonName, []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, 24*time.Hour)
+	bundle, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, commonName, 24*time.Hour, pki.WithDNSNames("localhost"), pki.WithIPAddresses(net.ParseIP("127.0.0.1")))
 	require.NoError(t, err)
 	return bundle
 }
@@ -263,9 +263,9 @@ func TestMTLSIntegration(t *testing.T) {
 				// the chain and in the handshake is ML-DSA at this level.
 				ca, err := pki.GenerateCA(tt.algorithm, "Test CA", "Test Org", 48*time.Hour)
 				require.NoError(t, err)
-				server, err := pki.GeneratePeerCert(tt.algorithm, ca, "localhost", []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, 24*time.Hour)
+				server, err := pki.GeneratePeerCert(tt.algorithm, ca, "localhost", 24*time.Hour, pki.WithDNSNames("localhost"), pki.WithIPAddresses(net.ParseIP("127.0.0.1")))
 				require.NoError(t, err)
-				client, err := pki.GeneratePeerCert(tt.algorithm, ca, "test-client", []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")}, 24*time.Hour)
+				client, err := pki.GeneratePeerCert(tt.algorithm, ca, "test-client", 24*time.Hour, pki.WithDNSNames("localhost"), pki.WithIPAddresses(net.ParseIP("127.0.0.1")))
 				require.NoError(t, err)
 
 				serverTLSConfig, err := NewTLSConfig(

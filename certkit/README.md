@@ -25,9 +25,9 @@ cert, err := pki.GeneratePeerCert(
     pki.ECDSAP256(),
     ca,
     "my-service",
-    []string{"localhost", "my-service.internal"},
-    []net.IP{net.ParseIP("127.0.0.1")},
     time.Hour,
+    pki.WithDNSNames("localhost", "my-service.internal"),
+    pki.WithIPAddresses(net.ParseIP("127.0.0.1")),
     pki.WithURIs("spiffe://example.org/ns/default/sa/my-service"),
 )
 ```
@@ -101,13 +101,17 @@ free() // the key is no longer needed; do not wait for the deferred call
 
 ### `pki`
 
+`GenerateCA` takes `CAOption`s and the leaf generators take `LeafOption`s, so an option that does not apply is a compile error rather than silently ignored.
+
 | Symbol | Effect |
 |--------|--------|
 | `ECDSAP256()`, `ECDSAP384()`, `RSA2048()`, `RSA4096()`, `Ed25519()` | Key algorithm for the generated certificate |
 | `MLDSA44()`, `MLDSA65()`, `MLDSA87()` | Post-quantum ML-DSA (FIPS 204) key. Peers must accept ML-DSA signatures in TLS 1.3, as Go does from 1.27 |
-| `WithMaxPathLen(n)` | CA path length constraint. Default 0, a single-level hierarchy |
-| `WithSerial(n)` | Fixed serial number instead of a random 128-bit one |
-| `WithURIs(uris...)` | URI SANs, for example SPIFFE IDs. Validated as absolute ASCII URIs that round-trip verbatim |
+| `WithMaxPathLen(n)` | CA only: path length constraint. Default 0, a single-level hierarchy |
+| `WithSerial(n)` | CA or leaf: fixed serial number instead of a random 128-bit one |
+| `WithDNSNames(names...)` | Leaf only: DNS name SANs |
+| `WithIPAddresses(ips...)` | Leaf only: IP address SANs |
+| `WithURIs(uris...)` | Leaf only: URI SANs, for example SPIFFE IDs. Validated as absolute ASCII URIs that round-trip verbatim |
 
 ### `mtls`
 
