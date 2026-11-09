@@ -35,6 +35,11 @@ exactly what it rejected before. The alternative, requiring a DNS name or IP
 alongside every SPIFFE ID, would force callers to invent a filler hostname that
 nothing verifies against.
 
+That holds for a client leaf. A server leaf is verified by the dialling client,
+and a stock TLS client, including one configured by `mtls`, matches the dialled
+DNS name or IP address and never a URI SAN. A URI-only server therefore fails
+the handshake unless its clients verify the URI themselves.
+
 ## URIs are rejected, never rewritten
 
 `url.Parse` alone is not sufficient validation. It is permissive enough to

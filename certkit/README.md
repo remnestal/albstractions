@@ -52,6 +52,8 @@ srv := &http.Server{Addr: ":8443", Handler: mux, TLSConfig: tlsCfg}
 
 For the client side of the same connection, add `mtls.WithServerName` so verification uses the expected identity rather than the dialled address.
 
+The client matches the server's DNS name or IP address, never a URI SAN, so a server whose leaf carries only URI SANs (for example a SPIFFE ID from `pki.WithURIs`) fails the handshake. Issue server leaves a DNS name or IP address as well. Servers check client certificates against the CA alone, so URI-only clients are unaffected.
+
 ### Load key material from the environment
 
 `FromEnv` reads a variable instead of a file, decoding it on the way out. This suits platforms that inject secrets as base64 or hex blobs.

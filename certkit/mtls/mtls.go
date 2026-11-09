@@ -34,6 +34,12 @@ func WithServerName(name string) Option {
 // single CA. The Go TLS stack uses the relevant fields depending on which
 // role the connection takes.
 //
+// In the client role the server is verified by DNS name or IP address, as
+// crypto/tls does by default, never by URI SAN: a server whose leaf carries
+// only URI SANs, such as a SPIFFE ID, fails verification. In the server role
+// client certificates are verified against the CA alone, so URI-only clients
+// are accepted.
+//
 // Note: the free functions from cert, key, and ca zero the raw PEM bytes after
 // parsing, but X509KeyPair copies key material internally — the parsed private
 // key inside tls.Certificate is not zeroed. This is a known limitation of the
