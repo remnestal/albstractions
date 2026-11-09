@@ -486,6 +486,18 @@ func TestGeneratePeerCert(t *testing.T) {
 			assert.WithinDuration(t, want, cert.NotBefore, 0)
 		})
 	})
+
+	t.Run("leaf cert inherits the CA's organization", func(t *testing.T) {
+		t.Parallel()
+
+		leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"))
+		require.NoError(t, err)
+
+		// Compare with the literal org given to GenerateCA: an empty CA
+		// organization would match an empty leaf one.
+		cert := parseCert(t, leaf.CertPEM)
+		assert.Equal(t, []string{"Test Org"}, cert.Subject.Organization)
+	})
 }
 
 func TestGenerateServerCert(t *testing.T) {
