@@ -114,29 +114,37 @@ func TestRoundTripper_concurrentCallersSerialised(t *testing.T) {
 	// would never advance past a goroutine blocked in Accept.
 	srv := newTestServer(t)
 	synctest.Test(t, func(t *testing.T) {
-		delay := 20 * time.Millisecond
+		pt := &peakTracker{}
+		release := make(chan struct{})
 		rt := throttle.NewRoundTripper(
 			roundTripperFn(func(_ *http.Request) (*http.Response, error) {
+				pt.enter()
+				<-release
+				pt.exit()
 				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
 			}),
-			constSchedule(delay),
+			constSchedule(0), // only the default cap keeps the requests apart
 		)
 		client := &http.Client{Transport: rt}
 
 		const n = 5
-		start := time.Now()
 		var wg sync.WaitGroup
 		wg.Add(n)
 		for range n {
 			go func() {
 				defer wg.Done()
 				resp, err := client.Get(srv.URL)
-				require.NoError(t, err)
-				require.NoError(t, resp.Body.Close())
+				if assert.NoError(t, err) {
+					assert.NoError(t, resp.Body.Close())
+				}
 			}()
 		}
+		// Every request is now inside the inner transport or blocked on a slot.
+		synctest.Wait()
+		assert.Equal(t, int64(1), pt.inside(), "only one request should be in flight by default")
+		close(release)
 		wg.Wait()
-		assert.Equal(t, time.Duration(n-1)*delay, time.Since(start))
+		assert.Equal(t, int64(1), pt.peak)
 	})
 }
 
@@ -148,10 +156,11 @@ func TestRoundTripper_withMaxInflight(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const cap = 2
 		pt := &peakTracker{}
+		release := make(chan struct{})
 		rt := throttle.NewRoundTripper(
 			roundTripperFn(func(_ *http.Request) (*http.Response, error) {
 				pt.enter()
-				time.Sleep(30 * time.Millisecond)
+				<-release
 				pt.exit()
 				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
 			}),
@@ -167,12 +176,17 @@ func TestRoundTripper_withMaxInflight(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				resp, err := client.Get(srv.URL)
-				require.NoError(t, err)
-				require.NoError(t, resp.Body.Close())
+				if assert.NoError(t, err) {
+					assert.NoError(t, resp.Body.Close())
+				}
 			}()
 		}
+		// Every request is now inside the inner transport or blocked on a slot.
+		synctest.Wait()
+		assert.Equal(t, int64(cap), pt.inside(), "cap requests should be in flight together")
+		close(release)
 		wg.Wait()
-		assert.LessOrEqual(t, pt.peak, int64(cap))
+		assert.Equal(t, int64(cap), pt.peak)
 	})
 }
 

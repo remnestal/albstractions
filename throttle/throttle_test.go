@@ -88,6 +88,13 @@ func (p *peakTracker) exit() {
 	p.mu.Unlock()
 }
 
+// inside reports how many goroutines are inside fn now.
+func (p *peakTracker) inside() int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.current
+}
+
 func TestThrottle_Do_spacing(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -145,6 +152,55 @@ func TestThrottle_Do_contextCancelDuringWait(t *testing.T) {
 	})
 }
 
+func TestThrottle_Do_cancelledWaiterAdvancesCadence(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		const delay = time.Second
+		th := throttle.New(constSchedule(delay))
+		start := time.Now()
+		require.NoError(t, th.Do(t.Context(), func(context.Context) error { return nil }))
+
+		// This caller takes the turn at 1s, then gives up during the paced wait.
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		require.ErrorIs(t, th.Do(ctx, func(context.Context) error { return nil }), context.DeadlineExceeded)
+
+		// The abandoned turn stays taken, so the next caller gets the one after it.
+		var started time.Duration
+		require.NoError(t, th.Do(t.Context(), func(context.Context) error {
+			started = time.Since(start)
+			return nil
+		}))
+		assert.Equal(t, 2*delay, started)
+	})
+}
+
+func TestThrottle_Do_idleDoesNotBankCalls(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		const delay = 100 * time.Millisecond
+		th := throttle.New(constSchedule(delay))
+		require.NoError(t, th.Do(t.Context(), func(context.Context) error { return nil }))
+
+		// Stay idle for several delays' worth of turns.
+		time.Sleep(5 * delay)
+		idleEnd := time.Now()
+
+		var times []time.Time
+		for range 3 {
+			require.NoError(t, th.Do(t.Context(), func(context.Context) error {
+				times = append(times, time.Now())
+				return nil
+			}))
+		}
+
+		assert.Equal(t, idleEnd, times[0], "the first call after an idle gap should not wait")
+		for i := 1; i < len(times); i++ {
+			assert.Equal(t, delay, times[i].Sub(times[i-1]), "gap between call %d and %d", i-1, i)
+		}
+	})
+}
+
 func TestThrottle_Do_fnErrorPropagated(t *testing.T) {
 	t.Parallel()
 
@@ -198,6 +254,7 @@ func TestThrottle_Do_maxInflight_caps(t *testing.T) {
 		pt := &peakTracker{}
 		th := throttle.New(constSchedule(0), throttle.WithMaxInflight(cap))
 
+		release := make(chan struct{})
 		var wg sync.WaitGroup
 		const n = 8
 		wg.Add(n)
@@ -206,14 +263,18 @@ func TestThrottle_Do_maxInflight_caps(t *testing.T) {
 				defer wg.Done()
 				_ = th.Do(t.Context(), func(_ context.Context) error {
 					pt.enter()
-					time.Sleep(20 * time.Millisecond)
+					<-release
 					pt.exit()
 					return nil
 				})
 			}()
 		}
+		// Every caller is now inside fn or blocked on a slot.
+		synctest.Wait()
+		assert.Equal(t, int64(cap), pt.inside(), "cap callers should be inside fn together")
+		close(release)
 		wg.Wait()
-		assert.LessOrEqual(t, pt.peak, int64(cap))
+		assert.Equal(t, int64(cap), pt.peak)
 	})
 }
 
