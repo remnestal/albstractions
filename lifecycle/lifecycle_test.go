@@ -843,7 +843,7 @@ func TestShutdownCause(t *testing.T) {
 
 			go func() { time.Sleep(10 * time.Millisecond); g.Shutdown() }()
 			require.NoError(t, g.Run())
-			assert.Nil(t, g.ShutdownCause())
+			assert.NoError(t, g.ShutdownCause())
 		})
 	})
 
@@ -903,9 +903,7 @@ func TestShutdownCause(t *testing.T) {
 			g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
 
 			assert.NoError(t, g.Run())
-			cause := g.ShutdownCause()
-			assert.NotNil(t, cause)
-			assert.Contains(t, cause.Error(), "early-exit")
+			assert.ErrorContains(t, g.ShutdownCause(), "early-exit")
 		})
 	})
 }

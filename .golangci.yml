@@ -19,10 +19,3 @@ linters:
       expected-actual:
         # The default also matches `exp`, which here names an expiry.
         pattern: (^(expected|want(ed)?)([A-Z]\w*)?$)|(^(\w*[a-z])?(Expected|Want(ed)?)$)
-  exclusions:
-    rules:
-      # Findings in lines that unmerged branches rewrite. Drop each rule once
-      # its branches land, fixing the lifecycle sites on top of #22 and #25.
-      - path: lifecycle_test\.go # #22, #25
-        linters: [testifylint]
-        text: "error-nil:"
