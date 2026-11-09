@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,167 +27,9 @@ func (c *closeRecorder) Close() error {
 	return nil
 }
 
-func newTestServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-func TestRoundTripper_spacing(t *testing.T) {
-	t.Parallel()
-	// The server is never dialled; it must stay outside the bubble, whose clock
-	// would never advance past a goroutine blocked in Accept.
-	srv := newTestServer(t)
-	synctest.Test(t, func(t *testing.T) {
-		delay := 40 * time.Millisecond
-
-		var (
-			mu    sync.Mutex
-			times []time.Time
-		)
-		rt := throttle.NewRoundTripper(
-			roundTripperFn(func(req *http.Request) (*http.Response, error) {
-				mu.Lock()
-				times = append(times, time.Now())
-				mu.Unlock()
-				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
-			}),
-			constSchedule(delay),
-			throttle.WithMaxInflight(throttle.Unbounded),
-		)
-		client := &http.Client{Transport: rt}
-
-		const n = 4
-		for range n {
-			resp, err := client.Get(srv.URL)
-			require.NoError(t, err)
-			require.NoError(t, resp.Body.Close())
-		}
-
-		require.Len(t, times, n)
-		for i := 1; i < len(times); i++ {
-			assert.Equal(t, delay, times[i].Sub(times[i-1]), "gap between call %d and %d", i-1, i)
-		}
-	})
-}
-
-func TestRoundTripper_contextCancel(t *testing.T) {
-	t.Parallel()
-	// The server is never dialled; it must stay outside the bubble, whose clock
-	// would never advance past a goroutine blocked in Accept.
-	srv := newTestServer(t)
-	synctest.Test(t, func(t *testing.T) {
-		var called atomic.Int32
-		rt := throttle.NewRoundTripper(
-			roundTripperFn(func(_ *http.Request) (*http.Response, error) {
-				called.Add(1)
-				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
-			}),
-			constSchedule(10*time.Second),
-			throttle.WithMaxInflight(throttle.Unbounded),
-		)
-		client := &http.Client{Transport: rt}
-
-		// First request fires immediately.
-		resp, err := client.Get(srv.URL)
-		require.NoError(t, err)
-		require.NoError(t, resp.Body.Close())
-
-		// Second request must wait 10s — cancel it.
-		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-		defer cancel()
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-		require.NoError(t, err)
-
-		_, err = client.Do(req)
-		assert.Error(t, err)
-		assert.Equal(t, int32(1), called.Load(), "inner transport should only be called once")
-	})
-}
-
-func TestRoundTripper_concurrentCallersSerialised(t *testing.T) {
-	t.Parallel()
-	// The server is never dialled; it must stay outside the bubble, whose clock
-	// would never advance past a goroutine blocked in Accept.
-	srv := newTestServer(t)
-	synctest.Test(t, func(t *testing.T) {
-		pt := &peakTracker{}
-		release := make(chan struct{})
-		rt := throttle.NewRoundTripper(
-			roundTripperFn(func(_ *http.Request) (*http.Response, error) {
-				pt.enter()
-				<-release
-				pt.exit()
-				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
-			}),
-			constSchedule(0), // only the default cap keeps the requests apart
-		)
-		client := &http.Client{Transport: rt}
-
-		const n = 5
-		var wg sync.WaitGroup
-		wg.Add(n)
-		for range n {
-			go func() {
-				defer wg.Done()
-				resp, err := client.Get(srv.URL)
-				if assert.NoError(t, err) {
-					assert.NoError(t, resp.Body.Close())
-				}
-			}()
-		}
-		// Every request is now inside the inner transport or blocked on a slot.
-		synctest.Wait()
-		assert.Equal(t, int64(1), pt.inside(), "only one request should be in flight by default")
-		close(release)
-		wg.Wait()
-		assert.Equal(t, int64(1), pt.peak)
-	})
-}
-
-func TestRoundTripper_withMaxInflight(t *testing.T) {
-	t.Parallel()
-	// The server is never dialled; it must stay outside the bubble, whose clock
-	// would never advance past a goroutine blocked in Accept.
-	srv := newTestServer(t)
-	synctest.Test(t, func(t *testing.T) {
-		const cap = 2
-		pt := &peakTracker{}
-		release := make(chan struct{})
-		rt := throttle.NewRoundTripper(
-			roundTripperFn(func(_ *http.Request) (*http.Response, error) {
-				pt.enter()
-				<-release
-				pt.exit()
-				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
-			}),
-			constSchedule(0),
-			throttle.WithMaxInflight(cap),
-		)
-		client := &http.Client{Transport: rt}
-
-		const n = 8
-		var wg sync.WaitGroup
-		wg.Add(n)
-		for range n {
-			go func() {
-				defer wg.Done()
-				resp, err := client.Get(srv.URL)
-				if assert.NoError(t, err) {
-					assert.NoError(t, resp.Body.Close())
-				}
-			}()
-		}
-		// Every request is now inside the inner transport or blocked on a slot.
-		synctest.Wait()
-		assert.Equal(t, int64(cap), pt.inside(), "cap requests should be in flight together")
-		close(release)
-		wg.Wait()
-		assert.Equal(t, int64(cap), pt.peak)
-	})
-}
+// testURL is the address every test requests. Each test injects a fake inner
+// transport, so nothing is ever dialled.
+const testURL = "http://example.test/"
 
 // roundTripperFn adapts a function to http.RoundTripper.
 type roundTripperFn func(*http.Request) (*http.Response, error)
@@ -213,6 +54,149 @@ func TestRoundTripper_RoundTrip(t *testing.T) {
 		})
 	}
 
+	t.Run("spaces requests by the schedule's delay", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			delay := 40 * time.Millisecond
+
+			var (
+				mu    sync.Mutex
+				times []time.Time
+			)
+			rt := throttle.NewRoundTripper(
+				roundTripperFn(func(req *http.Request) (*http.Response, error) {
+					mu.Lock()
+					times = append(times, time.Now())
+					mu.Unlock()
+					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
+				}),
+				constSchedule(delay),
+				throttle.WithMaxInflight(throttle.Unbounded),
+			)
+			client := &http.Client{Transport: rt}
+
+			const n = 4
+			for range n {
+				resp, err := client.Get(testURL)
+				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
+			}
+
+			require.Len(t, times, n)
+			for i := 1; i < len(times); i++ {
+				assert.Equal(t, delay, times[i].Sub(times[i-1]), "gap between call %d and %d", i-1, i)
+			}
+		})
+	})
+
+	t.Run("does not forward a request cancelled during the paced wait", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			var called atomic.Int32
+			rt := throttle.NewRoundTripper(
+				roundTripperFn(func(_ *http.Request) (*http.Response, error) {
+					called.Add(1)
+					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
+				}),
+				constSchedule(10*time.Second),
+				throttle.WithMaxInflight(throttle.Unbounded),
+			)
+			client := &http.Client{Transport: rt}
+
+			// First request fires immediately.
+			resp, err := client.Get(testURL)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+
+			// Second request must wait 10s — cancel it.
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+			defer cancel()
+
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL, nil)
+			require.NoError(t, err)
+
+			_, err = client.Do(req)
+			assert.Error(t, err)
+			assert.Equal(t, int32(1), called.Load(), "inner transport should only be called once")
+		})
+	})
+
+	t.Run("allows one request in flight by default", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			pt := &peakTracker{}
+			release := make(chan struct{})
+			rt := throttle.NewRoundTripper(
+				roundTripperFn(func(_ *http.Request) (*http.Response, error) {
+					pt.enter()
+					<-release
+					pt.exit()
+					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
+				}),
+				constSchedule(0), // only the default cap keeps the requests apart
+			)
+			client := &http.Client{Transport: rt}
+
+			const n = 5
+			var wg sync.WaitGroup
+			wg.Add(n)
+			for range n {
+				go func() {
+					defer wg.Done()
+					resp, err := client.Get(testURL)
+					if assert.NoError(t, err) {
+						assert.NoError(t, resp.Body.Close())
+					}
+				}()
+			}
+			// Every request is now inside the inner transport or blocked on a slot.
+			synctest.Wait()
+			assert.Equal(t, int64(1), pt.inside(), "only one request should be in flight by default")
+			close(release)
+			wg.Wait()
+			assert.Equal(t, int64(1), pt.peak)
+		})
+	})
+
+	t.Run("keeps the cap's worth of requests in flight together", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			const cap = 2
+			pt := &peakTracker{}
+			release := make(chan struct{})
+			rt := throttle.NewRoundTripper(
+				roundTripperFn(func(_ *http.Request) (*http.Response, error) {
+					pt.enter()
+					<-release
+					pt.exit()
+					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
+				}),
+				constSchedule(0),
+				throttle.WithMaxInflight(cap),
+			)
+			client := &http.Client{Transport: rt}
+
+			const n = 8
+			var wg sync.WaitGroup
+			wg.Add(n)
+			for range n {
+				go func() {
+					defer wg.Done()
+					resp, err := client.Get(testURL)
+					if assert.NoError(t, err) {
+						assert.NoError(t, resp.Body.Close())
+					}
+				}()
+			}
+			// Every request is now inside the inner transport or blocked on a slot.
+			synctest.Wait()
+			assert.Equal(t, int64(cap), pt.inside(), "cap requests should be in flight together")
+			close(release)
+			wg.Wait()
+			assert.Equal(t, int64(cap), pt.peak)
+		})
+	})
+
 	t.Run("closes the request body when cancelled during the paced wait", func(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
@@ -220,7 +204,7 @@ func TestRoundTripper_RoundTrip(t *testing.T) {
 			rt := throttle.NewRoundTripper(forwardingTransport(&forwarded, nil), constSchedule(time.Hour))
 
 			// The first request passes immediately and pushes the next slot an hour out.
-			first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.test/", nil)
+			first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testURL, nil)
 			require.NoError(t, err)
 			_, err = rt.RoundTrip(first)
 			require.NoError(t, err)
@@ -228,7 +212,7 @@ func TestRoundTripper_RoundTrip(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			body := &closeRecorder{Reader: strings.NewReader("payload")}
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.test/", body)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, testURL, body)
 			require.NoError(t, err)
 
 			_, err = rt.RoundTrip(req)
@@ -248,7 +232,7 @@ func TestRoundTripper_RoundTrip(t *testing.T) {
 			// The first request holds the only in-flight slot until released.
 			var wg sync.WaitGroup
 			wg.Go(func() {
-				first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.test/", nil)
+				first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testURL, nil)
 				if assert.NoError(t, err) {
 					_, err = rt.RoundTrip(first)
 					assert.NoError(t, err)
@@ -259,7 +243,7 @@ func TestRoundTripper_RoundTrip(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			body := &closeRecorder{Reader: strings.NewReader("payload")}
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://example.test/", body)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, testURL, body)
 			require.NoError(t, err)
 
 			_, err = rt.RoundTrip(req)
