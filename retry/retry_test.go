@@ -229,38 +229,43 @@ func TestDo(t *testing.T) {
 
 	t.Run("hook fires once per attempt including success", func(t *testing.T) {
 		t.Parallel()
-		var mu sync.Mutex
-		var infos []retry.AttemptInfo
-		hook := retry.WithHook(func(a retry.AttemptInfo) {
-			mu.Lock()
-			infos = append(infos, a)
-			mu.Unlock()
+		synctest.Test(t, func(t *testing.T) {
+			var mu sync.Mutex
+			var infos []retry.AttemptInfo
+			hook := retry.WithHook(func(a retry.AttemptInfo) {
+				mu.Lock()
+				infos = append(infos, a)
+				mu.Unlock()
+			})
+
+			r := retry.New(constSchedule(time.Millisecond), retry.MaxAttempts(10), hook)
+
+			var calls atomic.Int64
+			transient := errors.New("transient")
+			err := r.Do(t.Context(), func(_ context.Context) error {
+				if calls.Add(1) < 3 {
+					return transient
+				}
+				return nil
+			})
+			require.NoError(t, err)
+
+			require.Len(t, infos, 3)
+			assert.Equal(t, 1, infos[0].Attempt)
+			assert.ErrorIs(t, infos[0].Err, transient)
+			assert.Equal(t, time.Millisecond, infos[0].Next)
+			assert.Equal(t, time.Duration(0), infos[0].Elapsed)
+
+			assert.Equal(t, 2, infos[1].Attempt)
+			assert.ErrorIs(t, infos[1].Err, transient)
+			assert.Equal(t, time.Millisecond, infos[1].Next)
+			assert.Equal(t, time.Millisecond, infos[1].Elapsed)
+
+			assert.Equal(t, 3, infos[2].Attempt)
+			assert.NoError(t, infos[2].Err)
+			assert.Equal(t, time.Duration(0), infos[2].Next, "Next must be 0 on success")
+			assert.Equal(t, 2*time.Millisecond, infos[2].Elapsed)
 		})
-
-		r := retry.New(constSchedule(time.Millisecond), retry.MaxAttempts(10), hook)
-
-		var calls atomic.Int64
-		transient := errors.New("transient")
-		err := r.Do(t.Context(), func(_ context.Context) error {
-			if calls.Add(1) < 3 {
-				return transient
-			}
-			return nil
-		})
-		require.NoError(t, err)
-
-		require.Len(t, infos, 3)
-		assert.Equal(t, 1, infos[0].Attempt)
-		assert.ErrorIs(t, infos[0].Err, transient)
-		assert.Equal(t, time.Millisecond, infos[0].Next)
-
-		assert.Equal(t, 2, infos[1].Attempt)
-		assert.ErrorIs(t, infos[1].Err, transient)
-		assert.Equal(t, time.Millisecond, infos[1].Next)
-
-		assert.Equal(t, 3, infos[2].Attempt)
-		assert.NoError(t, infos[2].Err)
-		assert.Equal(t, time.Duration(0), infos[2].Next, "Next must be 0 on success")
 	})
 
 	t.Run("hook Next is zero on halt", func(t *testing.T) {
@@ -284,6 +289,7 @@ func TestDo(t *testing.T) {
 			assert.Equal(t, 2, last.Attempt)
 			assert.ErrorIs(t, last.Err, sentinel)
 			assert.Equal(t, time.Duration(0), last.Next, "Next must be 0 when Do is about to halt")
+			assert.Equal(t, time.Second, last.Elapsed, "one 1s sleep precedes the halting attempt")
 		})
 	})
 
