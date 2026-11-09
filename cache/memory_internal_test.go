@@ -66,11 +66,11 @@ func TestMemoryLookup(t *testing.T) {
 
 	getters := []struct {
 		name string
-		get  func(m *Memory[string, int]) bool
+		get  func(ctx context.Context, m *Memory[string, int]) bool
 	}{
-		{"Get", func(m *Memory[string, int]) bool { _, ok := m.Get("k"); return ok }},
-		{"GetContext", func(m *Memory[string, int]) bool {
-			_, ok, _ := m.GetContext(context.Background(), "k")
+		{"Get", func(_ context.Context, m *Memory[string, int]) bool { _, ok := m.Get("k"); return ok }},
+		{"GetContext", func(ctx context.Context, m *Memory[string, int]) bool {
+			_, ok, _ := m.GetContext(ctx, "k")
 			return ok
 		}},
 	}
@@ -82,7 +82,7 @@ func TestMemoryLookup(t *testing.T) {
 				m.Set("k", 1, After(time.Second))
 				time.Sleep(2 * time.Second)
 
-				assert.False(t, g.get(m))
+				assert.False(t, g.get(t.Context(), m))
 				m.mu.RLock()
 				defer m.mu.RUnlock()
 				assert.Empty(t, m.m, "an expired entry must be deleted when read")

@@ -313,7 +313,7 @@ func TestServe(t *testing.T) {
 			Addr: "127.0.0.1:0",
 			BaseContext: func(l net.Listener) context.Context {
 				addr <- l.Addr().String()
-				return context.Background()
+				return t.Context()
 			},
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
@@ -376,7 +376,7 @@ func TestServe(t *testing.T) {
 			Addr: "127.0.0.1:0",
 			BaseContext: func(l net.Listener) context.Context {
 				slowAddr <- l.Addr().String()
-				return context.Background()
+				return t.Context()
 			},
 			Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				close(inHandler)
@@ -441,7 +441,7 @@ func TestServe(t *testing.T) {
 				Addr: "127.0.0.1:0",
 				BaseContext: func(l net.Listener) context.Context {
 					addr <- l.Addr().String()
-					return context.Background()
+					return t.Context()
 				},
 				Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 					inFlight.Done()
@@ -489,7 +489,7 @@ func TestServe(t *testing.T) {
 			Addr: "127.0.0.1:0",
 			BaseContext: func(l net.Listener) context.Context {
 				addr <- l.Addr().String()
-				return context.Background()
+				return t.Context()
 			},
 			Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				close(inHandler)

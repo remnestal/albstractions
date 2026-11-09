@@ -12,6 +12,10 @@ linters:
     - usetesting # t.TempDir(), t.Setenv() and friends over os equivalents
     - testifylint # testify misuse, including require off the test goroutine
   settings:
+    usetesting:
+      # Off by default. Tests use t.Context() for contexts they own.
+      context-background: true
+      context-todo: true
     testifylint:
       disable:
         # House style uses assert for checks the rest of the test survives.
