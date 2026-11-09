@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"net"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/certkit/pki"
@@ -184,6 +185,22 @@ func TestGenerateCA(t *testing.T) {
 				assert.NotEmpty(t, bundle.KeyPEM)
 			})
 		}
+	})
+
+	t.Run("CA cert is back-dated one minute", func(t *testing.T) {
+		t.Parallel()
+
+		// The bubble's clock starts on a whole second and stands still, so the
+		// one-minute offset survives x509's truncation to seconds exactly.
+		synctest.Test(t, func(t *testing.T) {
+			want := time.Now().Add(-time.Minute)
+
+			bundle, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour)
+			require.NoError(t, err)
+
+			cert := parseCert(t, bundle.CertPEM)
+			assert.WithinDuration(t, want, cert.NotBefore, 0)
+		})
 	})
 }
 
@@ -431,6 +448,24 @@ func TestGeneratePeerCert(t *testing.T) {
 				assert.Contains(t, err.Error(), tt.want)
 			})
 		}
+	})
+
+	t.Run("leaf cert is back-dated one minute", func(t *testing.T) {
+		t.Parallel()
+
+		// The bubble's clock starts on a whole second and stands still, so the
+		// one-minute offset survives x509's truncation to seconds exactly.
+		synctest.Test(t, func(t *testing.T) {
+			want := time.Now().Add(-time.Minute)
+
+			ca, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", 24*time.Hour)
+			require.NoError(t, err)
+			leaf, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"))
+			require.NoError(t, err)
+
+			cert := parseCert(t, leaf.CertPEM)
+			assert.WithinDuration(t, want, cert.NotBefore, 0)
+		})
 	})
 }
 
