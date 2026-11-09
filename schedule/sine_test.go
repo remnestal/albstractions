@@ -34,6 +34,36 @@ func TestSine(t *testing.T) {
 		})
 	})
 
+	t.Run("follows a raised cosine that wraps each period", func(t *testing.T) {
+		t.Parallel()
+
+		// A sixth of a period tells the raised cosine from a triangle wave,
+		// which agrees with it at every quarter period. Past one period the
+		// phase must wrap rather than stay at the end of the cycle.
+		tests := []struct {
+			name    string
+			elapsed time.Duration
+			want    time.Duration
+		}{
+			{"a quarter of the way up at a sixth of a period", period / 6, lo + (hi-lo)/4},
+			{"midway at a quarter period", period / 4, (lo + hi) / 2},
+			{"hi at one and a half periods", 3 * period / 2, hi},
+			{"a quarter of the way up at seven sixths of a period", period + period/6, lo + (hi-lo)/4},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					s := schedule.NewSine(lo, hi, period)
+					s.Next() // starts the cycle at the bubble's current time
+					time.Sleep(tt.elapsed)
+					// Allow 1ns for the float64 round trip through math.Cos.
+					assert.InDelta(t, float64(tt.want), float64(s.Next()), 1)
+				})
+			})
+		}
+	})
+
 	t.Run("returns lo at phase zero", func(t *testing.T) {
 		t.Parallel()
 
