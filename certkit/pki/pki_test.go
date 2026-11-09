@@ -202,6 +202,25 @@ func TestGenerateCA(t *testing.T) {
 			assert.WithinDuration(t, want, cert.NotBefore, 0)
 		})
 	})
+
+	t.Run("uses a distinct positive random serial of at most 20 octets by default", func(t *testing.T) {
+		t.Parallel()
+
+		first, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour)
+		require.NoError(t, err)
+		second, err := pki.GenerateCA(pki.ECDSAP256(), "Test CA", "Test Org", time.Hour)
+		require.NoError(t, err)
+
+		a := parseCert(t, first.CertPEM).SerialNumber
+		b := parseCert(t, second.CertPEM).SerialNumber
+		assert.Positive(t, a.Sign(), "serial must be positive")
+		assert.Positive(t, b.Sign(), "serial must be positive")
+		// RFC 5280 caps serials at 20 octets when DER-encoded, which leaves
+		// 159 bits once DER's sign octet is counted.
+		assert.LessOrEqual(t, a.BitLen(), 159)
+		assert.LessOrEqual(t, b.BitLen(), 159)
+		assert.NotEqual(t, 0, a.Cmp(b), "two CAs got the same serial %s", a)
+	})
 }
 
 func TestGeneratePeerCert(t *testing.T) {
