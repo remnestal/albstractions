@@ -5,6 +5,7 @@ import (
 	"maps"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/cache"
@@ -55,11 +56,13 @@ func TestMemory_Get(t *testing.T) {
 
 	t.Run("reports an expired entry as missing", func(t *testing.T) {
 		t.Parallel()
-		c := cache.NewMemory[string, int]()
-		c.Set("k", 1, cache.After(time.Nanosecond))
-		time.Sleep(time.Millisecond)
-		_, ok := c.Get("k")
-		assert.False(t, ok)
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			c.Set("k", 1, cache.After(time.Nanosecond))
+			time.Sleep(time.Millisecond)
+			_, ok := c.Get("k")
+			assert.False(t, ok)
+		})
 	})
 }
 
@@ -98,13 +101,15 @@ func TestMemory_Set(t *testing.T) {
 
 	t.Run("Keep preserves the existing expiry", func(t *testing.T) {
 		t.Parallel()
-		c := cache.NewMemory[string, int]()
-		first := c.Set("k", 1, cache.After(time.Hour))
-		time.Sleep(5 * time.Millisecond)
-		kept := c.Set("k", 2, cache.Keep)
-		assert.Equal(t, first, kept)
-		v, _ := c.Get("k")
-		assert.Equal(t, 2, v)
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			first := c.Set("k", 1, cache.After(time.Hour))
+			time.Sleep(5 * time.Millisecond)
+			kept := c.Set("k", 2, cache.Keep)
+			assert.Equal(t, first, kept)
+			v, _ := c.Get("k")
+			assert.Equal(t, 2, v)
+		})
 	})
 
 	t.Run("Keep on an absent key falls back to Default", func(t *testing.T) {
@@ -116,14 +121,16 @@ func TestMemory_Set(t *testing.T) {
 
 	t.Run("Keep on an expired entry does not resurrect a stale expiry", func(t *testing.T) {
 		t.Parallel()
-		c := cache.NewMemory[string, int]()
-		c.Set("k", 1, cache.After(time.Nanosecond))
-		time.Sleep(time.Millisecond)
-		exp := c.Set("k", 2, cache.Keep)
-		assert.True(t, exp.IsZero())
-		v, ok := c.Get("k")
-		require.True(t, ok)
-		assert.Equal(t, 2, v)
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			c.Set("k", 1, cache.After(time.Nanosecond))
+			time.Sleep(time.Millisecond)
+			exp := c.Set("k", 2, cache.Keep)
+			assert.True(t, exp.IsZero())
+			v, ok := c.Get("k")
+			require.True(t, ok)
+			assert.Equal(t, 2, v)
+		})
 	})
 }
 
@@ -160,12 +167,14 @@ func TestMemory_Items(t *testing.T) {
 
 	t.Run("excludes expired entries", func(t *testing.T) {
 		t.Parallel()
-		c := cache.NewMemory[string, int]()
-		c.Set("live", 1, cache.After(time.Hour))
-		c.Set("dead", 2, cache.After(time.Nanosecond))
-		time.Sleep(time.Millisecond)
-		got := maps.Collect(c.Items())
-		assert.Equal(t, map[string]int{"live": 1}, got)
+		synctest.Test(t, func(t *testing.T) {
+			c := cache.NewMemory[string, int]()
+			c.Set("live", 1, cache.After(time.Hour))
+			c.Set("dead", 2, cache.After(time.Nanosecond))
+			time.Sleep(time.Millisecond)
+			got := maps.Collect(c.Items())
+			assert.Equal(t, map[string]int{"live": 1}, got)
+		})
 	})
 
 	t.Run("the body may mutate the cache without deadlock", func(t *testing.T) {

@@ -3,6 +3,7 @@ package schedule_test
 import (
 	"math"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/schedule"
@@ -18,13 +19,19 @@ func TestSine(t *testing.T) {
 
 	t.Run("returns values within [lo, hi]", func(t *testing.T) {
 		t.Parallel()
-
-		s := schedule.NewSine(lo, hi, period)
-		for i := range 100 {
-			d := s.Next()
-			assert.GreaterOrEqual(t, d, lo, "iteration %d", i)
-			assert.LessOrEqual(t, d, hi, "iteration %d", i)
-		}
+		synctest.Test(t, func(t *testing.T) {
+			// Sample the default clock across a whole period, peaking at hi halfway.
+			s := schedule.NewSine(lo, hi, period)
+			for i := range 100 {
+				d := s.Next()
+				assert.GreaterOrEqual(t, d, lo, "iteration %d", i)
+				assert.LessOrEqual(t, d, hi, "iteration %d", i)
+				if i == 50 {
+					assert.Equal(t, hi, d, "half a period in")
+				}
+				time.Sleep(period / 100)
+			}
+		})
 	})
 
 	t.Run("returns lo at phase zero", func(t *testing.T) {

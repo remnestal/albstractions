@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/remnestal/albstractions/retry"
@@ -120,16 +121,17 @@ func TestDo(t *testing.T) {
 
 	t.Run("halts on max elapsed", func(t *testing.T) {
 		t.Parallel()
-		r := retry.New(constSchedule(30*time.Millisecond), retry.MaxElapsed(50*time.Millisecond))
+		synctest.Test(t, func(t *testing.T) {
+			r := retry.New(constSchedule(30*time.Millisecond), retry.MaxElapsed(50*time.Millisecond))
 
-		sentinel := errors.New("nope")
-		start := time.Now()
-		err := r.Do(t.Context(), func(_ context.Context) error { return sentinel })
-		elapsed := time.Since(start)
+			sentinel := errors.New("nope")
+			start := time.Now()
+			err := r.Do(t.Context(), func(_ context.Context) error { return sentinel })
+			elapsed := time.Since(start)
 
-		assert.ErrorIs(t, err, sentinel)
-		assert.GreaterOrEqual(t, elapsed, 30*time.Millisecond)
-		assert.Less(t, elapsed, 200*time.Millisecond, "should give up shortly after the budget")
+			assert.ErrorIs(t, err, sentinel)
+			assert.Equal(t, 60*time.Millisecond, elapsed, "attempts at 0, 30 and 60ms; the third is past the budget")
+		})
 	})
 
 	t.Run("halts on error", func(t *testing.T) {
@@ -152,23 +154,25 @@ func TestDo(t *testing.T) {
 
 	t.Run("context cancel during sleep returns ctx.Err", func(t *testing.T) {
 		t.Parallel()
-		r := retry.New(constSchedule(10*time.Second), retry.MaxAttempts(100))
+		synctest.Test(t, func(t *testing.T) {
+			r := retry.New(constSchedule(10*time.Second), retry.MaxAttempts(100))
 
-		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
-		defer cancel()
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+			defer cancel()
 
-		var calls atomic.Int64
-		transient := errors.New("transient")
-		start := time.Now()
-		err := r.Do(ctx, func(_ context.Context) error {
-			calls.Add(1)
-			return transient
+			var calls atomic.Int64
+			transient := errors.New("transient")
+			start := time.Now()
+			err := r.Do(ctx, func(_ context.Context) error {
+				calls.Add(1)
+				return transient
+			})
+			elapsed := time.Since(start)
+
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.Equal(t, int64(1), calls.Load(), "fn should run once before sleep cancels")
+			assert.Equal(t, 30*time.Millisecond, elapsed)
 		})
-		elapsed := time.Since(start)
-
-		assert.ErrorIs(t, err, context.DeadlineExceeded)
-		assert.Equal(t, int64(1), calls.Load(), "fn should run once before sleep cancels")
-		assert.Less(t, elapsed, 500*time.Millisecond)
 	})
 
 	t.Run("context cancel with non-positive delay returns ctx.Err", func(t *testing.T) {
@@ -261,24 +265,26 @@ func TestDo(t *testing.T) {
 
 	t.Run("hook Next is zero on halt", func(t *testing.T) {
 		t.Parallel()
-		var last retry.AttemptInfo
-		var mu sync.Mutex
-		hook := retry.WithHook(func(a retry.AttemptInfo) {
+		synctest.Test(t, func(t *testing.T) {
+			var last retry.AttemptInfo
+			var mu sync.Mutex
+			hook := retry.WithHook(func(a retry.AttemptInfo) {
+				mu.Lock()
+				last = a
+				mu.Unlock()
+			})
+
+			r := retry.New(constSchedule(time.Second), retry.MaxAttempts(2), hook)
+
+			sentinel := errors.New("x")
+			_ = r.Do(t.Context(), func(_ context.Context) error { return sentinel })
+
 			mu.Lock()
-			last = a
-			mu.Unlock()
+			defer mu.Unlock()
+			assert.Equal(t, 2, last.Attempt)
+			assert.ErrorIs(t, last.Err, sentinel)
+			assert.Equal(t, time.Duration(0), last.Next, "Next must be 0 when Do is about to halt")
 		})
-
-		r := retry.New(constSchedule(time.Second), retry.MaxAttempts(2), hook)
-
-		sentinel := errors.New("x")
-		_ = r.Do(t.Context(), func(_ context.Context) error { return sentinel })
-
-		mu.Lock()
-		defer mu.Unlock()
-		assert.Equal(t, 2, last.Attempt)
-		assert.ErrorIs(t, last.Err, sentinel)
-		assert.Equal(t, time.Duration(0), last.Next, "Next must be 0 when Do is about to halt")
 	})
 
 	t.Run("schedule advanced only between attempts", func(t *testing.T) {
@@ -316,12 +322,14 @@ func TestDo(t *testing.T) {
 
 	t.Run("always-continue stop respects context", func(t *testing.T) {
 		t.Parallel()
-		// StopFunc that never halts — only ctx can stop the loop.
-		r := retry.New(constSchedule(5*time.Millisecond), retry.StopFunc(alwaysContinue))
-		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
-		defer cancel()
+		synctest.Test(t, func(t *testing.T) {
+			// StopFunc that never halts — only ctx can stop the loop.
+			r := retry.New(constSchedule(5*time.Millisecond), retry.StopFunc(alwaysContinue))
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+			defer cancel()
 
-		err := r.Do(ctx, func(_ context.Context) error { return errors.New("x") })
-		assert.ErrorIs(t, err, context.DeadlineExceeded)
+			err := r.Do(ctx, func(_ context.Context) error { return errors.New("x") })
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+		})
 	})
 }

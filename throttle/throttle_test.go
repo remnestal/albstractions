@@ -90,61 +90,59 @@ func (p *peakTracker) exit() {
 
 func TestThrottle_Do_spacing(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		delay := 40 * time.Millisecond
+		th := throttle.New(constSchedule(delay), throttle.WithMaxInflight(throttle.Unbounded))
 
-	delay := 40 * time.Millisecond
-	th := throttle.New(constSchedule(delay), throttle.WithMaxInflight(throttle.Unbounded))
+		var times []time.Time
+		const n = 4
+		for range n {
+			err := th.Do(t.Context(), func(_ context.Context) error {
+				times = append(times, time.Now())
+				return nil
+			})
+			require.NoError(t, err)
+		}
 
-	var (
-		mu    sync.Mutex
-		times []time.Time
-	)
-	const n = 4
-	for range n {
-		err := th.Do(t.Context(), func(_ context.Context) error {
-			mu.Lock()
-			times = append(times, time.Now())
-			mu.Unlock()
-			return nil
-		})
-		require.NoError(t, err)
-	}
-
-	require.Len(t, times, n)
-	for i := 1; i < len(times); i++ {
-		gap := times[i].Sub(times[i-1])
-		assert.GreaterOrEqual(t, gap, delay-5*time.Millisecond,
-			"gap between call %d and %d should be >= %v", i-1, i, delay)
-	}
+		require.Len(t, times, n)
+		for i := 1; i < len(times); i++ {
+			assert.Equal(t, delay, times[i].Sub(times[i-1]), "gap between call %d and %d", i-1, i)
+		}
+	})
 }
 
 func TestThrottle_Do_firstCallImmediate(t *testing.T) {
 	t.Parallel()
-
-	th := throttle.New(constSchedule(10 * time.Second))
-	start := time.Now()
-	err := th.Do(t.Context(), func(_ context.Context) error { return nil })
-	require.NoError(t, err)
-	assert.Less(t, time.Since(start), 50*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		th := throttle.New(constSchedule(10 * time.Second))
+		start := time.Now()
+		err := th.Do(t.Context(), func(_ context.Context) error { return nil })
+		require.NoError(t, err)
+		assert.Zero(t, time.Since(start))
+	})
 }
 
 func TestThrottle_Do_contextCancelDuringWait(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		th := throttle.New(constSchedule(10*time.Second), throttle.WithMaxInflight(throttle.Unbounded))
+		// Prime so the next call has to wait.
+		err := th.Do(t.Context(), func(_ context.Context) error { return nil })
+		require.NoError(t, err)
 
-	th := throttle.New(constSchedule(10*time.Second), throttle.WithMaxInflight(throttle.Unbounded))
-	// Prime so the next call has to wait.
-	err := th.Do(t.Context(), func(_ context.Context) error { return nil })
-	require.NoError(t, err)
+		var called atomic.Bool
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
 
-	var called atomic.Bool
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
-
-	err = th.Do(ctx, func(_ context.Context) error {
-		called.Store(true)
-		return nil
+		start := time.Now()
+		err = th.Do(ctx, func(_ context.Context) error {
+			called.Store(true)
+			return nil
+		})
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, 20*time.Millisecond, time.Since(start))
+		assert.False(t, called.Load(), "fn should not have been called")
 	})
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.False(t, called.Load(), "fn should not have been called")
 }
 
 func TestThrottle_Do_fnErrorPropagated(t *testing.T) {
@@ -170,106 +168,110 @@ func TestThrottle_Do_scheduleAdvancedPerCall(t *testing.T) {
 
 func TestThrottle_Do_defaultIsSerial(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		pt := &peakTracker{}
+		th := throttle.New(constSchedule(0))
 
-	pt := &peakTracker{}
-	th := throttle.New(constSchedule(0))
-
-	var wg sync.WaitGroup
-	const n = 8
-	wg.Add(n)
-	for range n {
-		go func() {
-			defer wg.Done()
-			_ = th.Do(t.Context(), func(_ context.Context) error {
-				pt.enter()
-				time.Sleep(10 * time.Millisecond)
-				pt.exit()
-				return nil
-			})
-		}()
-	}
-	wg.Wait()
-	assert.Equal(t, int64(1), pt.peak, "default should be serial (peak in-flight == 1)")
+		var wg sync.WaitGroup
+		const n = 8
+		wg.Add(n)
+		for range n {
+			go func() {
+				defer wg.Done()
+				_ = th.Do(t.Context(), func(_ context.Context) error {
+					pt.enter()
+					time.Sleep(10 * time.Millisecond)
+					pt.exit()
+					return nil
+				})
+			}()
+		}
+		wg.Wait()
+		assert.Equal(t, int64(1), pt.peak, "default should be serial (peak in-flight == 1)")
+	})
 }
 
 func TestThrottle_Do_maxInflight_caps(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		const cap = 2
+		pt := &peakTracker{}
+		th := throttle.New(constSchedule(0), throttle.WithMaxInflight(cap))
 
-	const cap = 2
-	pt := &peakTracker{}
-	th := throttle.New(constSchedule(0), throttle.WithMaxInflight(cap))
-
-	var wg sync.WaitGroup
-	const n = 8
-	wg.Add(n)
-	for range n {
-		go func() {
-			defer wg.Done()
-			_ = th.Do(t.Context(), func(_ context.Context) error {
-				pt.enter()
-				time.Sleep(20 * time.Millisecond)
-				pt.exit()
-				return nil
-			})
-		}()
-	}
-	wg.Wait()
-	assert.LessOrEqual(t, pt.peak, int64(cap))
+		var wg sync.WaitGroup
+		const n = 8
+		wg.Add(n)
+		for range n {
+			go func() {
+				defer wg.Done()
+				_ = th.Do(t.Context(), func(_ context.Context) error {
+					pt.enter()
+					time.Sleep(20 * time.Millisecond)
+					pt.exit()
+					return nil
+				})
+			}()
+		}
+		wg.Wait()
+		assert.LessOrEqual(t, pt.peak, int64(cap))
+	})
 }
 
 func TestThrottle_Do_unbounded_allowsConcurrentFns(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		pt := &peakTracker{}
+		th := throttle.New(constSchedule(0), throttle.WithMaxInflight(throttle.Unbounded))
 
-	pt := &peakTracker{}
-	th := throttle.New(constSchedule(0), throttle.WithMaxInflight(throttle.Unbounded))
-
-	var wg sync.WaitGroup
-	const n = 8
-	wg.Add(n)
-	for range n {
-		go func() {
-			defer wg.Done()
-			_ = th.Do(t.Context(), func(_ context.Context) error {
-				pt.enter()
-				time.Sleep(50 * time.Millisecond)
-				pt.exit()
-				return nil
-			})
-		}()
-	}
-	wg.Wait()
-	assert.Greater(t, pt.peak, int64(1), "unbounded should allow > 1 concurrent fn")
+		var wg sync.WaitGroup
+		const n = 8
+		wg.Add(n)
+		for range n {
+			go func() {
+				defer wg.Done()
+				_ = th.Do(t.Context(), func(_ context.Context) error {
+					pt.enter()
+					time.Sleep(50 * time.Millisecond)
+					pt.exit()
+					return nil
+				})
+			}()
+		}
+		wg.Wait()
+		assert.Greater(t, pt.peak, int64(1), "unbounded should allow > 1 concurrent fn")
+	})
 }
 
 func TestThrottle_Do_maxInflight_contextCancelDuringAcquire(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		// Default cap=1; hold the slot with a slow fn.
+		th := throttle.New(constSchedule(0))
 
-	// Default cap=1; hold the slot with a slow fn.
-	th := throttle.New(constSchedule(0))
+		slotHeld := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			_ = th.Do(t.Context(), func(_ context.Context) error {
+				close(slotHeld)
+				time.Sleep(200 * time.Millisecond)
+				return nil
+			})
+		})
 
-	slotHeld := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		_ = th.Do(t.Context(), func(_ context.Context) error {
-			close(slotHeld)
-			time.Sleep(200 * time.Millisecond)
+		<-slotHeld // slot is now occupied
+
+		var called atomic.Bool
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
+
+		err := th.Do(ctx, func(_ context.Context) error {
+			called.Store(true)
 			return nil
 		})
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.False(t, called.Load())
+		wg.Wait()
 	})
-
-	<-slotHeld // slot is now occupied
-
-	var called atomic.Bool
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
-
-	err := th.Do(ctx, func(_ context.Context) error {
-		called.Store(true)
-		return nil
-	})
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.False(t, called.Load())
-	wg.Wait()
 }
 
 func TestThrottle_Do(t *testing.T) {

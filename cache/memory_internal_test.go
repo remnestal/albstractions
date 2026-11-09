@@ -135,68 +135,72 @@ func TestMemoryLookup(t *testing.T) {
 
 func TestMemoryCleanup(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		m := NewMemory[string, int]()
+		m.Set("live", 1, After(time.Hour))
+		m.Set("dead", 2, After(time.Nanosecond))
+		time.Sleep(time.Millisecond)
 
-	m := NewMemory[string, int]()
-	m.Set("live", 1, After(time.Hour))
-	m.Set("dead", 2, After(time.Nanosecond))
-	time.Sleep(time.Millisecond)
+		m.cleanup()
 
-	m.cleanup()
-
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	require.Len(t, m.m, 1)
-	_, ok := m.m["live"]
-	assert.True(t, ok)
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		require.Len(t, m.m, 1)
+		_, ok := m.m["live"]
+		assert.True(t, ok)
+	})
 }
 
 func TestMemoryRebuild(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		m := NewMemory[string, int]()
+		m.Set("live", 1, After(time.Hour))
+		m.Set("dead", 2, After(time.Nanosecond))
+		time.Sleep(time.Millisecond)
 
-	m := NewMemory[string, int]()
-	m.Set("live", 1, After(time.Hour))
-	m.Set("dead", 2, After(time.Nanosecond))
-	time.Sleep(time.Millisecond)
+		m.mu.RLock()
+		old := m.m
+		m.mu.RUnlock()
 
-	m.mu.RLock()
-	old := m.m
-	m.mu.RUnlock()
+		m.rebuild()
 
-	m.rebuild()
-
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	require.Len(t, m.m, 1)
-	_, ok := m.m["live"]
-	assert.True(t, ok)
-	// The original map is left untouched, proving a fresh map was swapped in.
-	assert.Len(t, old, 2)
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		require.Len(t, m.m, 1)
+		_, ok := m.m["live"]
+		assert.True(t, ok)
+		// The original map is left untouched, proving a fresh map was swapped in.
+		assert.Len(t, old, 2)
+	})
 }
 
 func TestMemoryBackgroundCleanup(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		m := NewMemory[string, int](WithCleanupInterval(5 * time.Millisecond))
+		defer func() { _ = m.Close() }()
+		m.Set("dead", 1, After(time.Nanosecond))
+		time.Sleep(5 * time.Millisecond)
+		synctest.Wait()
 
-	m := NewMemory[string, int](WithCleanupInterval(5 * time.Millisecond))
-	defer func() { _ = m.Close() }()
-	m.Set("dead", 1, After(time.Nanosecond))
-
-	assert.Eventually(t, func() bool {
 		m.mu.RLock()
 		defer m.mu.RUnlock()
-		return len(m.m) == 0
-	}, time.Second, 5*time.Millisecond)
+		assert.Empty(t, m.m)
+	})
 }
 
 func TestMemoryBackgroundRebuild(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		m := NewMemory[string, int](WithRebuildInterval(5 * time.Millisecond))
+		defer func() { _ = m.Close() }()
+		m.Set("dead", 1, After(time.Nanosecond))
+		time.Sleep(5 * time.Millisecond)
+		synctest.Wait()
 
-	m := NewMemory[string, int](WithRebuildInterval(5 * time.Millisecond))
-	defer func() { _ = m.Close() }()
-	m.Set("dead", 1, After(time.Nanosecond))
-
-	assert.Eventually(t, func() bool {
 		m.mu.RLock()
 		defer m.mu.RUnlock()
-		return len(m.m) == 0
-	}, time.Second, 5*time.Millisecond)
+		assert.Empty(t, m.m)
+	})
 }
