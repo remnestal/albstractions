@@ -312,32 +312,26 @@ func TestWithSingleFlight(t *testing.T) {
 
 	t.Run("a panicking loader does not wedge the key", func(t *testing.T) {
 		t.Parallel()
-		var calls atomic.Int64
-		loader := func(context.Context, string) (int, error) {
-			if calls.Add(1) == 1 {
-				panic("loader boom")
+		synctest.Test(t, func(t *testing.T) {
+			var calls atomic.Int64
+			loader := func(context.Context, string) (int, error) {
+				if calls.Add(1) == 1 {
+					panic("loader boom")
+				}
+				return 42, nil
 			}
-			return 42, nil
-		}
-		rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
+			rt := cache.NewReadThrough[string, int](cache.NewMemory[string, int](), loader, cache.WithSingleFlight())
 
-		assert.Panics(t, func() { rt.Get("k") })
+			assert.Panics(t, func() { rt.Get("k") })
 
-		// The key must not be wedged: a later load succeeds. Guard with a timeout
-		// so a regression (the in-flight entry leaking) fails fast instead of
-		// hanging the suite.
-		done := make(chan int, 1)
-		go func() {
-			v, _ := rt.Get("k")
-			done <- v
-		}()
-		select {
-		case v := <-done:
+			// The key must not be wedged: a later load succeeds. Were the in-flight
+			// entry leaked, this Get would wait on it forever, which the bubble
+			// reports as a deadlock at once.
+			v, ok := rt.Get("k")
+			assert.True(t, ok)
 			assert.Equal(t, 42, v)
-		case <-time.After(time.Second):
-			t.Fatal("Get deadlocked: a panicking load wedged the key")
-		}
-		assert.Equal(t, int64(2), calls.Load())
+			assert.Equal(t, int64(2), calls.Load())
+		})
 	})
 
 	t.Run("waiters receive an error when the leader's load panics", func(t *testing.T) {
