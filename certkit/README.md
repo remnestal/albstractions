@@ -93,9 +93,8 @@ free() // the key is no longer needed; do not wait for the deferred call
 
 | Symbol | Applies to | Effect |
 |--------|-----------|--------|
-| `Hex(p)` / `Base64(p)` | any provider | Hex- or base64-decode the key from `p` |
-| `Decode(p, d)` | any provider | Decode the key from `p` with a custom `Decoder` |
-| `WithEnvTrimWhitespace()` / `WithFileTrimWhitespace()` | env / file | Strip all whitespace before decoding |
+| `Hex(p)` / `Base64(p)` | any provider | Hex- or base64-decode the key from `p`, skipping ASCII space, tab, CR and LF |
+| `Decode(p, d)` | any provider | Decode the key from `p` with a custom `Decoder`, which receives the value unchanged |
 | `WithEnvGetter(fn)` | env | Read variables through fn instead of `os.Getenv` |
 | `WithFilesystem(fsys)` | file | Open the file through an `fs.FS` instead of the OS |
 | `WithoutPermissionCheck()` | file | Skip the `0600`-or-stricter mode check |

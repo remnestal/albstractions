@@ -78,22 +78,6 @@ func TestFromEnv(t *testing.T) {
 		assert.Contains(t, err.Error(), "not set or empty")
 	})
 
-	t.Run("trims whitespace when requested", func(t *testing.T) {
-		t.Parallel()
-
-		getter := mockEnvGetter(map[string]string{
-			"TEST_KEY": "  \n\tmy-key\r\n  ",
-		})
-
-		provider := keyloader.FromEnv("TEST_KEY", keyloader.WithEnvGetter(getter), keyloader.WithEnvTrimWhitespace())
-		key, free, err := provider()
-
-		require.NoError(t, err)
-		assert.Equal(t, []byte("my-key"), key)
-
-		free()
-	})
-
 	t.Run("free function zeros the key bytes", func(t *testing.T) {
 		t.Parallel()
 
@@ -288,44 +272,6 @@ func TestFromFile(t *testing.T) {
 		assert.Contains(t, err.Error(), "is empty")
 	})
 
-	t.Run("trims whitespace when requested", func(t *testing.T) {
-		t.Parallel()
-
-		secretKey := []byte("my-secret-key")
-		encodedKey := base64.StdEncoding.EncodeToString(secretKey)
-		withWhitespace := "\n  " + encodedKey + "\n\t\r\n"
-
-		mfs := fstest.MapFS{
-			"key.txt": &fstest.MapFile{Data: []byte(withWhitespace), Mode: 0600},
-		}
-
-		provider := keyloader.Base64(keyloader.FromFile("key.txt",
-			keyloader.WithFilesystem(mfs),
-			keyloader.WithFileTrimWhitespace()))
-		key, free, err := provider()
-
-		require.NoError(t, err)
-		assert.Equal(t, secretKey, key)
-
-		free()
-	})
-
-	t.Run("returns error when trimmed file is empty", func(t *testing.T) {
-		t.Parallel()
-
-		mfs := fstest.MapFS{
-			"key.txt": &fstest.MapFile{Data: []byte("  \n\t\r\n  "), Mode: 0600},
-		}
-
-		provider := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs), keyloader.WithFileTrimWhitespace())
-		key, free, err := provider()
-
-		assert.Error(t, err)
-		assert.Nil(t, key)
-		assert.NotNil(t, free)
-		assert.Contains(t, err.Error(), "empty after trimming whitespace")
-	})
-
 	t.Run("free function zeros the key bytes", func(t *testing.T) {
 		t.Parallel()
 
@@ -475,6 +421,36 @@ func TestHex(t *testing.T) {
 		assert.Equal(t, secretKey, key)
 	})
 
+	t.Run("skips whitespace", func(t *testing.T) {
+		t.Parallel()
+
+		secretKey := []byte("my-secret-key")
+		encodedKey := hex.EncodeToString(secretKey)
+		getter := mockEnvGetter(map[string]string{
+			"TEST_KEY": "  \n\t" + encodedKey[:8] + " " + encodedKey[8:] + "\r\n  ",
+		})
+
+		key, free, err := keyloader.Hex(keyloader.FromEnv("TEST_KEY", keyloader.WithEnvGetter(getter)))()
+		defer free()
+
+		require.NoError(t, err)
+		assert.Equal(t, secretKey, key)
+	})
+
+	t.Run("returns error when the value holds only whitespace", func(t *testing.T) {
+		t.Parallel()
+
+		mfs := fstest.MapFS{
+			"key.txt": &fstest.MapFile{Data: []byte("  \n\t\r\n  "), Mode: 0600},
+		}
+
+		key, free, err := keyloader.Hex(keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs)))()
+		defer free()
+
+		assert.ErrorContains(t, err, "decoded key is empty")
+		assert.Nil(t, key)
+	})
+
 	t.Run("returns error for invalid hex", func(t *testing.T) {
 		t.Parallel()
 
@@ -495,6 +471,22 @@ func TestBase64(t *testing.T) {
 		secretKey := []byte("my-secret-key-32-bytes-long!!")
 
 		key, free, err := keyloader.Base64(mock.StaticProvider([]byte(base64.StdEncoding.EncodeToString(secretKey))))()
+		defer free()
+
+		require.NoError(t, err)
+		assert.Equal(t, secretKey, key)
+	})
+
+	t.Run("skips whitespace", func(t *testing.T) {
+		t.Parallel()
+
+		secretKey := []byte("my-secret-key")
+		encodedKey := base64.StdEncoding.EncodeToString(secretKey)
+		mfs := fstest.MapFS{
+			"key.txt": &fstest.MapFile{Data: []byte("\n  " + encodedKey[:8] + " \t" + encodedKey[8:] + "\n\t\r\n"), Mode: 0600},
+		}
+
+		key, free, err := keyloader.Base64(keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs)))()
 		defer free()
 
 		require.NoError(t, err)

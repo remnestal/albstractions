@@ -16,6 +16,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"slices"
 )
 
 // Provider returns a cryptographic key and a cleanup function.
@@ -32,11 +33,14 @@ type Provider func() (key []byte, free func(), err error)
 // it, and may return it or a slice of it. Decode copies the result into the
 // key and zeroes both, also when the Decoder fails, so a Decoder may return a
 // partly filled buffer with its error, as hex.Decode and base64's Decode do.
+//
+// The encoded key arrives unchanged, whitespace included. A Decoder for a
+// format that does not use whitespace should skip it, as [Hex] and [Base64]
+// do.
 type Decoder func(encoded []byte) ([]byte, error)
 
 type envConfig struct {
-	getter         func(string) string
-	trimWhitespace bool
+	getter func(string) string
 }
 
 // EnvOption configures an environment variable key provider.
@@ -47,17 +51,6 @@ type EnvOption func(*envConfig)
 func WithEnvGetter(getter func(string) string) EnvOption {
 	return func(c *envConfig) {
 		c.getter = getter
-	}
-}
-
-// WithEnvTrimWhitespace removes all whitespace characters from the value before decoding.
-//
-// This removes all whitespace (spaces, tabs, newlines) — not just leading/trailing.
-// This is intentional for handling multiline encoded formats, but means
-// a value like "my key" will silently become "mykey".
-func WithEnvTrimWhitespace() EnvOption {
-	return func(c *envConfig) {
-		c.trimWhitespace = true
 	}
 }
 
@@ -84,13 +77,13 @@ func FromEnv(envVar string, opts ...EnvOption) Provider {
 			return nil, func() {}, fmt.Errorf("environment variable %s is not set or empty", envVar)
 		}
 
-		return processKey([]byte(val), cfg.trimWhitespace)
+		key := []byte(val)
+		return key, func() { clear(key) }, nil
 	}
 }
 
 type fileConfig struct {
 	filesystem       fs.FS
-	trimWhitespace   bool
 	checkPermissions bool
 }
 
@@ -107,17 +100,6 @@ type FileOption func(*fileConfig)
 func WithFilesystem(filesystem fs.FS) FileOption {
 	return func(c *fileConfig) {
 		c.filesystem = filesystem
-	}
-}
-
-// WithFileTrimWhitespace removes all whitespace characters from the file contents before decoding.
-//
-// This removes all whitespace (spaces, tabs, newlines) — not just leading/trailing.
-// This is intentional for handling multiline encoded formats, but means
-// content like "my key" will silently become "mykey".
-func WithFileTrimWhitespace() FileOption {
-	return func(c *fileConfig) {
-		c.trimWhitespace = true
 	}
 }
 
@@ -172,7 +154,7 @@ func FromFile(path string, opts ...FileOption) Provider {
 			return nil, func() {}, fmt.Errorf("key file %s is empty", path)
 		}
 
-		return processKey(data, cfg.trimWhitespace)
+		return data, func() { clear(data) }, nil
 	}
 }
 
@@ -209,12 +191,18 @@ func Decode(p Provider, d Decoder) Provider {
 }
 
 // Hex returns a [Provider] that decodes the key from p as hexadecimal.
+//
+// ASCII space, tab, CR and LF are skipped, so a trailing newline or a value
+// wrapped across lines still decodes.
 func Hex(p Provider) Provider {
 	return Decode(p, decodeHex)
 }
 
 // Base64 returns a [Provider] that decodes the key from p as standard,
 // padded base64.
+//
+// ASCII space, tab, CR and LF are skipped, so a trailing newline or a value
+// wrapped across lines still decodes.
 func Base64(p Provider) Provider {
 	return Decode(p, decodeBase64)
 }
@@ -260,39 +248,28 @@ func readKey(r io.Reader, size int64) ([]byte, error) {
 	}
 }
 
-// processKey handles common key processing: trimming whitespace and creating
-// a cleanup function.
-//
-// It takes ownership of data — callers must not use data after this call,
-// and must call the returned free function to zero all key material.
-func processKey(data []byte, trimWhitespace bool) ([]byte, func(), error) {
-	if trimWhitespace {
-		original := data
-		defer clear(original)
-		data = bytes.Map(func(r rune) rune {
-			if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
-				return -1
-			}
-			return r
-		}, original)
-		if len(data) == 0 {
-			return nil, func() {}, fmt.Errorf("key is empty after trimming whitespace")
-		}
-	}
-
-	return data, func() { clear(data) }, nil
-}
-
 // decodeHex and decodeBase64 decode into a buffer they allocate, returning the
 // bytes written so far alongside any error, for [Decode] to zero.
+//
+// Both first skip whitespace, compacting data in place, which is Decode's own
+// copy.
 func decodeHex(data []byte) ([]byte, error) {
+	data = skipWhitespace(data)
 	dst := make([]byte, hex.DecodedLen(len(data)))
 	n, err := hex.Decode(dst, data)
 	return dst[:n], err
 }
 
 func decodeBase64(data []byte) ([]byte, error) {
+	data = skipWhitespace(data)
 	dst := make([]byte, base64.StdEncoding.DecodedLen(len(data)))
 	n, err := base64.StdEncoding.Decode(dst, data)
 	return dst[:n], err
+}
+
+// skipWhitespace removes ASCII space, tab, CR and LF from data in place.
+func skipWhitespace(data []byte) []byte {
+	return slices.DeleteFunc(data, func(b byte) bool {
+		return b == ' ' || b == '\t' || b == '\r' || b == '\n'
+	})
 }
