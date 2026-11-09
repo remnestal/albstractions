@@ -455,7 +455,7 @@ func TestGeneratePeerCert(t *testing.T) {
 			{name: "scheme-less authority", uri: "example.org/service/api", want: "not absolute"},
 			{name: "non-ASCII", uri: "spiffe://example.org/service/äpi", want: "non-ASCII"},
 			{name: "unescaped space", uri: "spiffe://example.org/service/a pi", want: "normalised form"},
-			{name: "control character", uri: "spiffe://example.org/service/\x7f", want: "URI SAN"},
+			{name: "control character", uri: "spiffe://example.org/service/\x7f", want: "invalid control character"},
 		}
 
 		for _, tt := range tests {
