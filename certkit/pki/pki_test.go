@@ -391,6 +391,25 @@ func TestGeneratePeerCert(t *testing.T) {
 		assert.Equal(t, 0, want.Cmp(cert.SerialNumber))
 	})
 
+	t.Run("uses a distinct positive random serial of at most 20 octets by default", func(t *testing.T) {
+		t.Parallel()
+
+		first, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"))
+		require.NoError(t, err)
+		second, err := pki.GeneratePeerCert(pki.ECDSAP256(), ca, "leaf1", time.Hour, pki.WithDNSNames("localhost"))
+		require.NoError(t, err)
+
+		a := parseCert(t, first.CertPEM).SerialNumber
+		b := parseCert(t, second.CertPEM).SerialNumber
+		assert.Positive(t, a.Sign(), "serial must be positive")
+		assert.Positive(t, b.Sign(), "serial must be positive")
+		// RFC 5280 caps serials at 20 octets when DER-encoded, which leaves
+		// 159 bits once DER's sign octet is counted.
+		assert.LessOrEqual(t, a.BitLen(), 159)
+		assert.LessOrEqual(t, b.BitLen(), 159)
+		assert.NotEqual(t, 0, a.Cmp(b), "two leaves from one CA got the same serial %s", a)
+	})
+
 	t.Run("leaf cert has no URI SANs by default", func(t *testing.T) {
 		t.Parallel()
 

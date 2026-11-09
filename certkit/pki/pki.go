@@ -165,7 +165,8 @@ func WithMaxPathLen(n int) CAOption {
 // (RFC 5280 §4.1.2.2), so at most 159 bits: DER prefixes a zero octet to any
 // value whose top bit is set, which makes 2^159 a 21-octet INTEGER.
 //
-// If not set, a cryptographically random 128-bit serial is used.
+// If not set, [crypto/x509.CreateCertificate] generates a random positive
+// serial of up to 159 bits.
 func WithSerial(serial *big.Int) Option {
 	return option(func(c *certConfig) {
 		c.serial = serial
@@ -236,15 +237,14 @@ func GenerateCA(algorithm KeyAlgorithm, commonName, org string, validity time.Du
 		return Bundle{}, fmt.Errorf("generate CA key: %w", err)
 	}
 
-	serial, err := resolveSerial(cfg)
-	if err != nil {
-		return Bundle{}, fmt.Errorf("generate CA serial: %w", err)
+	if err := validateSerial(cfg.serial); err != nil {
+		return Bundle{}, fmt.Errorf("validate CA serial: %w", err)
 	}
 
 	// Back-date by one minute to tolerate minor clock skew between peers.
 	notBefore := time.Now().Add(-time.Minute)
 	template := &x509.Certificate{
-		SerialNumber: serial,
+		SerialNumber: cfg.serial,
 		Subject: pkix.Name{
 			CommonName:   commonName,
 			Organization: []string{org},
@@ -371,15 +371,14 @@ func generateCert(algorithm KeyAlgorithm, ca Bundle, commonName string, validity
 		return Bundle{}, fmt.Errorf("generate leaf key: %w", err)
 	}
 
-	serial, err := resolveSerial(cfg)
-	if err != nil {
-		return Bundle{}, fmt.Errorf("generate leaf serial: %w", err)
+	if err := validateSerial(cfg.serial); err != nil {
+		return Bundle{}, fmt.Errorf("validate leaf serial: %w", err)
 	}
 
 	// Back-date by one minute to tolerate minor clock skew between peers.
 	notBefore := time.Now().Add(-time.Minute)
 	template := &x509.Certificate{
-		SerialNumber: serial,
+		SerialNumber: cfg.serial,
 		Subject: pkix.Name{
 			CommonName:   commonName,
 			Organization: caCert.Subject.Organization,
@@ -442,19 +441,24 @@ func parseCA(ca Bundle) (*x509.Certificate, crypto.Signer, error) {
 	return cert, signer, nil
 }
 
-func resolveSerial(cfg *certConfig) (*big.Int, error) {
-	if cfg.serial == nil {
-		return randomSerial()
+// validateSerial checks a [WithSerial] value against RFC 5280 §4.1.2.2.
+//
+// A nil serial is valid: x509.CreateCertificate then generates one. Its own
+// check rejects only negative serials, so zero and over-long values are caught
+// here.
+func validateSerial(serial *big.Int) error {
+	if serial == nil {
+		return nil
 	}
-	if cfg.serial.Sign() <= 0 {
-		return nil, fmt.Errorf("serial must be a positive integer")
+	if serial.Sign() <= 0 {
+		return fmt.Errorf("serial must be a positive integer")
 	}
 	// Bytes drops DER's sign octet, so measure in bits: a 160-bit value encodes
 	// to 21 octets.
-	if cfg.serial.BitLen() > 159 {
-		return nil, fmt.Errorf("serial exceeds maximum length of 20 octets when DER-encoded (RFC 5280)")
+	if serial.BitLen() > 159 {
+		return fmt.Errorf("serial exceeds maximum length of 20 octets when DER-encoded (RFC 5280)")
 	}
-	return cfg.serial, nil
+	return nil
 }
 
 func resolveURIs(cfg *certConfig) ([]*url.URL, error) {
@@ -493,15 +497,6 @@ func isASCII(s string) bool {
 		}
 	}
 	return true
-}
-
-func randomSerial() (*big.Int, error) {
-	// Generate in [1, 2^128] — RFC 5280 requires serial numbers to be positive integers.
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return nil, err
-	}
-	return serial.Add(serial, big.NewInt(1)), nil
 }
 
 func marshalPrivateKey(key crypto.Signer) ([]byte, error) {
