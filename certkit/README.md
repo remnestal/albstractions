@@ -66,7 +66,7 @@ tlsCfg, err := mtls.NewTLSConfig(
 )
 ```
 
-Note that the Go string backing an environment variable cannot be zeroed, so a file provider gives key material a shorter lifetime in memory.
+`FromEnv` zeroes its copy of the value, but not the variable itself: the runtime holds it as an immutable string for the life of the process, and child processes inherit it. A file provider keeps key material shorter-lived.
 
 ## Key material lifetime
 
@@ -85,7 +85,7 @@ free() // the key is no longer needed; do not wait for the deferred call
 
 `Hex`, `Base64` and `Decode` zero every buffer they decode through, also when decoding fails.
 
-`FromFile` refuses to read a file whose mode is looser than `0600`. Pass `WithoutPermissionCheck` to opt out where the platform makes that impractical. The file is opened once and both the check and the read use that handle, so a file swapped in between cannot slip past the check.
+`FromFile` refuses to read a file whose mode is looser than `0600`. Pass `WithoutPermissionCheck` to opt out where the platform makes that impractical, such as Windows, which reports every file as `0666`, or `0444` when read-only. The file is opened once and both the check and the read use that handle, so a file swapped in between cannot slip past the check.
 
 ## Options
 
@@ -118,6 +118,10 @@ free() // the key is no longer needed; do not wait for the deferred call
 | Option | Effect |
 |--------|--------|
 | `WithServerName(name)` | Sets `ServerName`, for verifying a peer by identity rather than dial address |
+
+## Raw keys
+
+A raw key is used byte for byte. A key file written with `echo` ends in a newline, and that newline becomes part of the key; write it with `printf '%s'`, or store the key hex- or base64-encoded, whose decoders skip whitespace.
 
 ## Generation guarantees
 

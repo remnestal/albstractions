@@ -59,10 +59,10 @@ func WithEnvGetter(getter func(string) string) EnvOption {
 // The value is the key, byte for byte. Wrap the provider in [Hex], [Base64] or
 // [Decode] for an encoded value.
 //
-// Note: the Go runtime represents environment variable values as immutable
-// strings. The Provider converts the value to a []byte copy and zeros that
-// copy when free is called, but the original string backing the environment
-// variable cannot be zeroed from Go without CGo.
+// The provider returns a []byte copy of the value and zeroes that copy on
+// free. The variable itself is not zeroed: the runtime holds it as an
+// immutable string for the life of the process, and child processes inherit
+// it. [FromFile] keeps key material shorter-lived.
 func FromEnv(envVar string, opts ...EnvOption) Provider {
 	cfg := &envConfig{
 		getter: os.Getenv,
@@ -112,11 +112,14 @@ func WithoutPermissionCheck() FileOption {
 
 // FromFile returns a [Provider] that reads a key from a file.
 //
-// The contents are the key, byte for byte. Wrap the provider in [Hex],
-// [Base64] or [Decode] for an encoded file.
+// The contents are the key, byte for byte, including any trailing newline an
+// editor or echo adds. Wrap the provider in [Hex], [Base64] or [Decode] for
+// an encoded file; Hex and Base64 skip such a newline.
 //
 // By default it uses the OS filesystem and checks that file permissions are
-// 0600 or stricter.
+// 0600 or stricter. Windows reports every file as 0666, or 0444 when it is
+// read-only, so the check rejects all of them there: pass
+// [WithoutPermissionCheck] and restrict access with ACLs instead.
 //
 // The file is opened once, and the permission check and the read both use
 // that handle, so a file swapped in between cannot pass the check for
