@@ -46,11 +46,9 @@ func TestShutdown(t *testing.T) {
 		g := lifecycle.New()
 		var wg sync.WaitGroup
 		for range 10 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				assert.NotPanics(t, g.Shutdown)
-			}()
+			})
 		}
 		wg.Wait()
 		assert.ErrorIs(t, g.Context().Err(), context.Canceled)
@@ -194,7 +192,6 @@ func TestDefer(t *testing.T) {
 		g := lifecycle.New()
 		var order []int
 		for i := range 5 {
-			i := i
 			g.Defer(100*time.Millisecond, func(_ context.Context) { order = append(order, i) })
 		}
 		g.Require("waiting", func(ctx context.Context) error { <-ctx.Done(); return nil })
@@ -605,18 +602,14 @@ func TestRun(t *testing.T) {
 
 		var setup sync.WaitGroup
 		for range 10 {
-			setup.Add(1)
-			go func() {
-				defer setup.Done()
+			setup.Go(func() {
 				g.Require("worker", func(ctx context.Context) error { <-ctx.Done(); return nil })
-			}()
+			})
 		}
 		for range 5 {
-			setup.Add(1)
-			go func() {
-				defer setup.Done()
+			setup.Go(func() {
 				g.Defer(50*time.Millisecond, func(_ context.Context) {})
-			}()
+			})
 		}
 
 		runErr := make(chan error, 1)
@@ -800,7 +793,7 @@ func TestWithContext(t *testing.T) {
 
 	t.Run("parent cancellation triggers shutdown", func(t *testing.T) {
 		t.Parallel()
-		parent, cancel := context.WithCancel(context.Background())
+		parent, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		g := lifecycle.New(lifecycle.WithContext(parent))
@@ -867,7 +860,7 @@ func TestWithContext(t *testing.T) {
 
 	t.Run("cause is parent context error", func(t *testing.T) {
 		t.Parallel()
-		parent, cancel := context.WithCancel(context.Background())
+		parent, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		g := lifecycle.New(lifecycle.WithContext(parent))

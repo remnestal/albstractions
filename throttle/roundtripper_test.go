@@ -93,7 +93,7 @@ func TestRoundTripper_contextCancel(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	// Second request must wait 10s — cancel it.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
