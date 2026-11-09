@@ -350,6 +350,48 @@ func TestDecode(t *testing.T) {
 		assert.Equal(t, []byte("key"), source)
 	})
 
+	t.Run("frees the source's key once it is decoded", func(t *testing.T) {
+		t.Parallel()
+
+		mfs := fstest.MapFS{
+			"key.txt": &fstest.MapFile{Data: []byte(hex.EncodeToString([]byte("my-secret-key"))), Mode: 0600},
+		}
+		var read []byte
+		source := func() ([]byte, func(), error) {
+			key, free, err := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs))()
+			read = key
+			return key, free, err
+		}
+
+		key, free, err := keyloader.Hex(source)()
+		defer free()
+
+		// The decoded key is a separate buffer, so the bytes read from the
+		// file must be zeroed already, before free is called.
+		require.NoError(t, err)
+		assert.Equal(t, []byte("my-secret-key"), key)
+		assert.Equal(t, make([]byte, len(read)), read)
+	})
+
+	t.Run("zeroes its copy of the encoded key and the decoder's result", func(t *testing.T) {
+		t.Parallel()
+
+		var input, output []byte
+		spy := func(encoded []byte) ([]byte, error) {
+			input = encoded
+			output = bytes.ToUpper(encoded)
+			return output, nil
+		}
+
+		key, free, err := keyloader.Decode(mock.StaticProvider([]byte("key")), spy)()
+		defer free()
+
+		require.NoError(t, err)
+		assert.Equal(t, []byte("KEY"), key)
+		assert.Equal(t, make([]byte, 3), input)
+		assert.Equal(t, make([]byte, 3), output)
+	})
+
 	t.Run("zeros a partly decoded key when the decoder fails", func(t *testing.T) {
 		t.Parallel()
 
