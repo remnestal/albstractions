@@ -56,12 +56,12 @@ The client matches the server's DNS name or IP address, never a URI SAN, so a se
 
 ### Load key material from the environment
 
-`FromEnv` reads a variable instead of a file, decoding it on the way out. This suits platforms that inject secrets as base64 or hex blobs.
+`FromEnv` reads a variable instead of a file, and wrapping it in `Base64` decodes it on the way out. This suits platforms that inject secrets as base64 or hex blobs. The decoding wrappers take any `Provider`, so they work the same on a file or a test double.
 
 ```go
 tlsCfg, err := mtls.NewTLSConfig(
-    keyloader.FromEnv("SERVICE_CERT", keyloader.WithEnvBase64()),
-    keyloader.FromEnv("SERVICE_KEY", keyloader.WithEnvBase64()),
+    keyloader.Base64(keyloader.FromEnv("SERVICE_CERT")),
+    keyloader.Base64(keyloader.FromEnv("SERVICE_KEY")),
     keyloader.FromFile("/etc/myservice/ca.pem", keyloader.WithoutPermissionCheck()),
 )
 ```
@@ -83,7 +83,7 @@ cert, err := tls.X509KeyPair(certPEM, key)
 free() // the key is no longer needed; do not wait for the deferred call
 ```
 
-The built-in hex and base64 options decode from bytes to bytes into buffers the provider zeroes, also when decoding fails. A custom `Decoder` necessarily receives the encoded key as a Go string, a copy that cannot be zeroed.
+`Hex`, `Base64` and `Decode` zero every buffer they decode through, also when decoding fails.
 
 `FromFile` refuses to read a file whose mode is looser than `0600`. Pass `WithoutPermissionCheck` to opt out where the platform makes that impractical. The file is opened once and both the check and the read use that handle, so a file swapped in between cannot slip past the check.
 
@@ -91,11 +91,10 @@ The built-in hex and base64 options decode from bytes to bytes into buffers the 
 
 ### `keyloader`
 
-| Option | Applies to | Effect |
+| Symbol | Applies to | Effect |
 |--------|-----------|--------|
-| `WithEnvHex()` / `WithFileHex()` | env / file | Hex-decode the loaded value |
-| `WithEnvBase64()` / `WithFileBase64()` | env / file | Base64-decode the loaded value |
-| `WithEnvDecoder(d)` / `WithFileDecoder(d)` | env / file | Decode with a custom `Decoder` |
+| `Hex(p)` / `Base64(p)` | any provider | Hex- or base64-decode the key from `p` |
+| `Decode(p, d)` | any provider | Decode the key from `p` with a custom `Decoder` |
 | `WithEnvTrimWhitespace()` / `WithFileTrimWhitespace()` | env / file | Strip all whitespace before decoding |
 | `WithEnvGetter(fn)` | env | Read variables through fn instead of `os.Getenv` |
 | `WithFilesystem(fsys)` | file | Open the file through an `fs.FS` instead of the OS |

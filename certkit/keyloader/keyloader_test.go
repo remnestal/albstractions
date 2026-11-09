@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"io/fs"
 	"testing"
 	"testing/fstest"
 
 	"github.com/remnestal/albstractions/certkit/keyloader"
+	"github.com/remnestal/albstractions/certkit/keyloader/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -76,44 +78,6 @@ func TestFromEnv(t *testing.T) {
 		assert.Contains(t, err.Error(), "not set or empty")
 	})
 
-	t.Run("decodes hex-encoded key", func(t *testing.T) {
-		t.Parallel()
-
-		secretKey := []byte("my-secret-key")
-		encodedKey := hex.EncodeToString(secretKey)
-
-		getter := mockEnvGetter(map[string]string{
-			"TEST_KEY": encodedKey,
-		})
-
-		provider := keyloader.FromEnv("TEST_KEY", keyloader.WithEnvGetter(getter), keyloader.WithEnvHex())
-		key, free, err := provider()
-
-		require.NoError(t, err)
-		assert.Equal(t, secretKey, key)
-
-		free()
-	})
-
-	t.Run("decodes base64-encoded key", func(t *testing.T) {
-		t.Parallel()
-
-		secretKey := []byte("my-secret-key-32-bytes-long!!")
-		encodedKey := base64.StdEncoding.EncodeToString(secretKey)
-
-		getter := mockEnvGetter(map[string]string{
-			"TEST_KEY": encodedKey,
-		})
-
-		provider := keyloader.FromEnv("TEST_KEY", keyloader.WithEnvGetter(getter), keyloader.WithEnvBase64())
-		key, free, err := provider()
-
-		require.NoError(t, err)
-		assert.Equal(t, secretKey, key)
-
-		free()
-	})
-
 	t.Run("trims whitespace when requested", func(t *testing.T) {
 		t.Parallel()
 
@@ -128,38 +92,6 @@ func TestFromEnv(t *testing.T) {
 		assert.Equal(t, []byte("my-key"), key)
 
 		free()
-	})
-
-	t.Run("returns error for invalid hex encoding", func(t *testing.T) {
-		t.Parallel()
-
-		getter := mockEnvGetter(map[string]string{
-			"TEST_KEY": "not-valid-hex!",
-		})
-
-		provider := keyloader.FromEnv("TEST_KEY", keyloader.WithEnvGetter(getter), keyloader.WithEnvHex())
-		key, free, err := provider()
-
-		assert.Error(t, err)
-		assert.Nil(t, key)
-		assert.NotNil(t, free)
-		assert.Contains(t, err.Error(), "decode key")
-	})
-
-	t.Run("returns error for invalid base64 encoding", func(t *testing.T) {
-		t.Parallel()
-
-		getter := mockEnvGetter(map[string]string{
-			"TEST_KEY": "not-valid-base64!@#$",
-		})
-
-		provider := keyloader.FromEnv("TEST_KEY", keyloader.WithEnvGetter(getter), keyloader.WithEnvBase64())
-		key, free, err := provider()
-
-		assert.Error(t, err)
-		assert.Nil(t, key)
-		assert.NotNil(t, free)
-		assert.Contains(t, err.Error(), "decode key")
 	})
 
 	t.Run("free function zeros the key bytes", func(t *testing.T) {
@@ -182,50 +114,6 @@ func TestFromEnv(t *testing.T) {
 		}
 	})
 
-	t.Run("zeros a partly decoded key when the decoder fails", func(t *testing.T) {
-		t.Parallel()
-
-		// "sec" in hex, then an invalid digit: hex.DecodeString returns the
-		// three bytes it decoded along with its error.
-		var partial []byte
-		spy := func(s string) ([]byte, error) {
-			var err error
-			partial, err = hex.DecodeString(s)
-			return partial, err
-		}
-
-		getter := mockEnvGetter(map[string]string{
-			"TEST_KEY": "736563zz",
-		})
-
-		provider := keyloader.FromEnv("TEST_KEY", keyloader.WithEnvGetter(getter), keyloader.WithEnvDecoder(spy))
-		key, free, err := provider()
-		defer free()
-
-		assert.ErrorContains(t, err, "decode key")
-		assert.Nil(t, key)
-		assert.Equal(t, make([]byte, 3), partial)
-	})
-
-	t.Run("custom decoder option works", func(t *testing.T) {
-		t.Parallel()
-
-		customDecoder := func(s string) ([]byte, error) {
-			return []byte(s + "-decoded"), nil
-		}
-
-		getter := mockEnvGetter(map[string]string{
-			"TEST_KEY": "test",
-		})
-
-		provider := keyloader.FromEnv("TEST_KEY", keyloader.WithEnvGetter(getter), keyloader.WithEnvDecoder(customDecoder))
-		key, free, err := provider()
-
-		require.NoError(t, err)
-		assert.Equal(t, []byte("test-decoded"), key)
-
-		free()
-	})
 }
 
 func TestFromFile(t *testing.T) {
@@ -400,44 +288,6 @@ func TestFromFile(t *testing.T) {
 		assert.Contains(t, err.Error(), "is empty")
 	})
 
-	t.Run("decodes hex-encoded key from file", func(t *testing.T) {
-		t.Parallel()
-
-		secretKey := []byte("my-secret-key")
-		encodedKey := hex.EncodeToString(secretKey)
-
-		mfs := fstest.MapFS{
-			"key.txt": &fstest.MapFile{Data: []byte(encodedKey), Mode: 0600},
-		}
-
-		provider := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs), keyloader.WithFileHex())
-		key, free, err := provider()
-
-		require.NoError(t, err)
-		assert.Equal(t, secretKey, key)
-
-		free()
-	})
-
-	t.Run("decodes base64-encoded key from file", func(t *testing.T) {
-		t.Parallel()
-
-		secretKey := []byte("my-secret-key-32-bytes-long!!")
-		encodedKey := base64.StdEncoding.EncodeToString(secretKey)
-
-		mfs := fstest.MapFS{
-			"key.txt": &fstest.MapFile{Data: []byte(encodedKey), Mode: 0600},
-		}
-
-		provider := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs), keyloader.WithFileBase64())
-		key, free, err := provider()
-
-		require.NoError(t, err)
-		assert.Equal(t, secretKey, key)
-
-		free()
-	})
-
 	t.Run("trims whitespace when requested", func(t *testing.T) {
 		t.Parallel()
 
@@ -449,10 +299,9 @@ func TestFromFile(t *testing.T) {
 			"key.txt": &fstest.MapFile{Data: []byte(withWhitespace), Mode: 0600},
 		}
 
-		provider := keyloader.FromFile("key.txt",
+		provider := keyloader.Base64(keyloader.FromFile("key.txt",
 			keyloader.WithFilesystem(mfs),
-			keyloader.WithFileBase64(),
-			keyloader.WithFileTrimWhitespace())
+			keyloader.WithFileTrimWhitespace()))
 		key, free, err := provider()
 
 		require.NoError(t, err)
@@ -477,38 +326,6 @@ func TestFromFile(t *testing.T) {
 		assert.Contains(t, err.Error(), "empty after trimming whitespace")
 	})
 
-	t.Run("returns error for invalid hex encoding in file", func(t *testing.T) {
-		t.Parallel()
-
-		mfs := fstest.MapFS{
-			"key.txt": &fstest.MapFile{Data: []byte("not-valid-hex!"), Mode: 0600},
-		}
-
-		provider := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs), keyloader.WithFileHex())
-		key, free, err := provider()
-
-		assert.Error(t, err)
-		assert.Nil(t, key)
-		assert.NotNil(t, free)
-		assert.Contains(t, err.Error(), "decode key")
-	})
-
-	t.Run("returns error for invalid base64 encoding in file", func(t *testing.T) {
-		t.Parallel()
-
-		mfs := fstest.MapFS{
-			"key.txt": &fstest.MapFile{Data: []byte("not-valid-base64!@#$"), Mode: 0600},
-		}
-
-		provider := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs), keyloader.WithFileBase64())
-		key, free, err := provider()
-
-		assert.Error(t, err)
-		assert.Nil(t, key)
-		assert.NotNil(t, free)
-		assert.Contains(t, err.Error(), "decode key")
-	})
-
 	t.Run("free function zeros the key bytes", func(t *testing.T) {
 		t.Parallel()
 
@@ -529,48 +346,168 @@ func TestFromFile(t *testing.T) {
 		}
 	})
 
+}
+
+func TestDecode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("decodes the key from the source provider", func(t *testing.T) {
+		t.Parallel()
+
+		upper := func(encoded []byte) ([]byte, error) {
+			return bytes.ToUpper(encoded), nil
+		}
+
+		key, free, err := keyloader.Decode(mock.StaticProvider([]byte("key")), upper)()
+		defer free()
+
+		require.NoError(t, err)
+		assert.Equal(t, []byte("KEY"), key)
+	})
+
+	t.Run("keeps a key the decoder sliced from its input", func(t *testing.T) {
+		t.Parallel()
+
+		// FromFile zeroes its buffer on free, which Decode calls before
+		// returning, so the key must not share memory with it.
+		mfs := fstest.MapFS{
+			"key.txt": &fstest.MapFile{Data: []byte("  key\n"), Mode: 0600},
+		}
+		trim := func(encoded []byte) ([]byte, error) {
+			return bytes.TrimSpace(encoded), nil
+		}
+
+		key, free, err := keyloader.Decode(keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs)), trim)()
+		defer free()
+
+		require.NoError(t, err)
+		assert.Equal(t, []byte("key"), key)
+	})
+
+	t.Run("leaves the source provider's bytes untouched", func(t *testing.T) {
+		t.Parallel()
+
+		source := []byte("key")
+		clobber := func(encoded []byte) ([]byte, error) {
+			decoded := bytes.Clone(encoded)
+			clear(encoded)
+			return decoded, nil
+		}
+		provider := keyloader.Decode(mock.StaticProvider(source), clobber)
+
+		for range 2 {
+			key, free, err := provider()
+			require.NoError(t, err)
+			assert.Equal(t, []byte("key"), key)
+			free()
+		}
+		assert.Equal(t, []byte("key"), source)
+	})
+
 	t.Run("zeros a partly decoded key when the decoder fails", func(t *testing.T) {
 		t.Parallel()
 
-		// "sec" in hex, then an invalid digit: hex.DecodeString returns the
-		// three bytes it decoded along with its error.
+		// "sec" in hex, then an invalid digit: hex.Decode writes the three
+		// bytes it decoded before reporting the error.
 		var partial []byte
-		spy := func(s string) ([]byte, error) {
-			var err error
-			partial, err = hex.DecodeString(s)
-			return partial, err
+		spy := func(encoded []byte) ([]byte, error) {
+			partial = make([]byte, hex.DecodedLen(len(encoded)))
+			n, err := hex.Decode(partial, encoded)
+			return partial[:n], err
 		}
 
-		mfs := fstest.MapFS{
-			"key.txt": &fstest.MapFile{Data: []byte("736563zz"), Mode: 0600},
-		}
-
-		provider := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs), keyloader.WithFileDecoder(spy))
-		key, free, err := provider()
+		key, free, err := keyloader.Decode(mock.StaticProvider([]byte("736563zz")), spy)()
 		defer free()
 
 		assert.ErrorContains(t, err, "decode key")
 		assert.Nil(t, key)
-		assert.Equal(t, make([]byte, 3), partial)
+		assert.Equal(t, make([]byte, 4), partial)
 	})
 
-	t.Run("custom decoder option works", func(t *testing.T) {
+	t.Run("free function zeros the key bytes", func(t *testing.T) {
 		t.Parallel()
 
-		customDecoder := func(s string) ([]byte, error) {
-			return []byte(s + "-decoded"), nil
-		}
-
-		mfs := fstest.MapFS{
-			"key.txt": &fstest.MapFile{Data: []byte("test"), Mode: 0600},
-		}
-
-		provider := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs), keyloader.WithFileDecoder(customDecoder))
-		key, free, err := provider()
-
+		key, free, err := keyloader.Hex(mock.StaticProvider([]byte("736563")))()
 		require.NoError(t, err)
-		assert.Equal(t, []byte("test-decoded"), key)
 
 		free()
+
+		assert.Equal(t, make([]byte, 3), key)
+	})
+
+	t.Run("returns the source provider's error", func(t *testing.T) {
+		t.Parallel()
+
+		errLoad := errors.New("load failed")
+
+		key, free, err := keyloader.Hex(mock.ErrorProvider(errLoad))()
+		defer free()
+
+		assert.ErrorIs(t, err, errLoad)
+		assert.Nil(t, key)
+	})
+
+	t.Run("returns error when the decoded key is empty", func(t *testing.T) {
+		t.Parallel()
+
+		empty := func([]byte) ([]byte, error) { return nil, nil }
+
+		key, free, err := keyloader.Decode(mock.StaticProvider([]byte("key")), empty)()
+		defer free()
+
+		assert.ErrorContains(t, err, "decoded key is empty")
+		assert.Nil(t, key)
+	})
+}
+
+func TestHex(t *testing.T) {
+	t.Parallel()
+
+	t.Run("decodes a hex-encoded key", func(t *testing.T) {
+		t.Parallel()
+
+		secretKey := []byte("my-secret-key")
+
+		key, free, err := keyloader.Hex(mock.StaticProvider([]byte(hex.EncodeToString(secretKey))))()
+		defer free()
+
+		require.NoError(t, err)
+		assert.Equal(t, secretKey, key)
+	})
+
+	t.Run("returns error for invalid hex", func(t *testing.T) {
+		t.Parallel()
+
+		key, free, err := keyloader.Hex(mock.StaticProvider([]byte("not-valid-hex!")))()
+		defer free()
+
+		assert.ErrorContains(t, err, "decode key")
+		assert.Nil(t, key)
+	})
+}
+
+func TestBase64(t *testing.T) {
+	t.Parallel()
+
+	t.Run("decodes a base64-encoded key", func(t *testing.T) {
+		t.Parallel()
+
+		secretKey := []byte("my-secret-key-32-bytes-long!!")
+
+		key, free, err := keyloader.Base64(mock.StaticProvider([]byte(base64.StdEncoding.EncodeToString(secretKey))))()
+		defer free()
+
+		require.NoError(t, err)
+		assert.Equal(t, secretKey, key)
+	})
+
+	t.Run("returns error for invalid base64", func(t *testing.T) {
+		t.Parallel()
+
+		key, free, err := keyloader.Base64(mock.StaticProvider([]byte("not-valid-base64!@#$")))()
+		defer free()
+
+		assert.ErrorContains(t, err, "decode key")
+		assert.Nil(t, key)
 	})
 }

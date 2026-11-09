@@ -2,7 +2,8 @@
 // variables or files.
 //
 // Construct a [Provider] with [FromEnv] or [FromFile]; it returns the key
-// bytes and a free function that zeros them — always defer free. The mock
+// bytes and a free function that zeros them — always defer free. Wrap it in
+// [Hex], [Base64] or [Decode] when the key is stored encoded. The mock
 // sub-package provides test doubles.
 package keyloader
 
@@ -25,23 +26,16 @@ import (
 // times.
 type Provider func() (key []byte, free func(), err error)
 
-// Decoder is a function that decodes a string into bytes.
+// Decoder decodes an encoded key into its raw bytes.
 //
-// The provider takes ownership of the returned slice and zeros it, on error as
-// well as on free, so a Decoder may return a partly filled buffer with its
-// error, as the encoding/hex and encoding/base64 DecodeString functions do.
-//
-// A Decoder necessarily receives the encoded key as a string copy, which
-// cannot be zeroed. The built-in hex and base64 options avoid that copy by
-// decoding bytes to bytes.
-type Decoder func(string) ([]byte, error)
-
-// decodeFunc is the byte-wise form of [Decoder] that processKey runs.
-type decodeFunc func([]byte) ([]byte, error)
+// It receives a copy of the encoded key that [Decode] owns, so it may modify
+// it, and may return it or a slice of it. Decode copies the result into the
+// key and zeroes both, also when the Decoder fails, so a Decoder may return a
+// partly filled buffer with its error, as hex.Decode and base64's Decode do.
+type Decoder func(encoded []byte) ([]byte, error)
 
 type envConfig struct {
 	getter         func(string) string
-	decode         decodeFunc
 	trimWhitespace bool
 }
 
@@ -56,15 +50,6 @@ func WithEnvGetter(getter func(string) string) EnvOption {
 	}
 }
 
-// WithEnvDecoder sets a decoder for the environment variable value.
-//
-// decoder sees an unzeroable string copy of the value; see [Decoder].
-func WithEnvDecoder(decoder Decoder) EnvOption {
-	return func(c *envConfig) {
-		c.decode = fromDecoder(decoder)
-	}
-}
-
 // WithEnvTrimWhitespace removes all whitespace characters from the value before decoding.
 //
 // This removes all whitespace (spaces, tabs, newlines) — not just leading/trailing.
@@ -76,24 +61,10 @@ func WithEnvTrimWhitespace() EnvOption {
 	}
 }
 
-// WithEnvHex sets hex decoding for the environment variable value.
-func WithEnvHex() EnvOption {
-	return func(c *envConfig) {
-		c.decode = decodeHex
-	}
-}
-
-// WithEnvBase64 sets base64 decoding (standard encoding) for the
-// environment variable value.
-func WithEnvBase64() EnvOption {
-	return func(c *envConfig) {
-		c.decode = decodeBase64
-	}
-}
-
 // FromEnv returns a [Provider] that reads a key from an environment variable.
 //
-// By default the key is read as raw bytes. Use options to customise behaviour.
+// The value is the key, byte for byte. Wrap the provider in [Hex], [Base64] or
+// [Decode] for an encoded value.
 //
 // Note: the Go runtime represents environment variable values as immutable
 // strings. The Provider converts the value to a []byte copy and zeros that
@@ -113,13 +84,12 @@ func FromEnv(envVar string, opts ...EnvOption) Provider {
 			return nil, func() {}, fmt.Errorf("environment variable %s is not set or empty", envVar)
 		}
 
-		return processKey([]byte(val), cfg.trimWhitespace, cfg.decode)
+		return processKey([]byte(val), cfg.trimWhitespace)
 	}
 }
 
 type fileConfig struct {
 	filesystem       fs.FS
-	decode           decodeFunc
 	trimWhitespace   bool
 	checkPermissions bool
 }
@@ -137,15 +107,6 @@ type FileOption func(*fileConfig)
 func WithFilesystem(filesystem fs.FS) FileOption {
 	return func(c *fileConfig) {
 		c.filesystem = filesystem
-	}
-}
-
-// WithFileDecoder sets a decoder for the file contents.
-//
-// decoder sees an unzeroable string copy of the contents; see [Decoder].
-func WithFileDecoder(decoder Decoder) FileOption {
-	return func(c *fileConfig) {
-		c.decode = fromDecoder(decoder)
 	}
 }
 
@@ -167,22 +128,10 @@ func WithoutPermissionCheck() FileOption {
 	}
 }
 
-// WithFileHex sets hex decoding for the file contents.
-func WithFileHex() FileOption {
-	return func(c *fileConfig) {
-		c.decode = decodeHex
-	}
-}
-
-// WithFileBase64 sets base64 decoding (standard encoding) for the file
-// contents.
-func WithFileBase64() FileOption {
-	return func(c *fileConfig) {
-		c.decode = decodeBase64
-	}
-}
-
 // FromFile returns a [Provider] that reads a key from a file.
+//
+// The contents are the key, byte for byte. Wrap the provider in [Hex],
+// [Base64] or [Decode] for an encoded file.
 //
 // By default it uses the OS filesystem and checks that file permissions are
 // 0600 or stricter.
@@ -223,8 +172,51 @@ func FromFile(path string, opts ...FileOption) Provider {
 			return nil, func() {}, fmt.Errorf("key file %s is empty", path)
 		}
 
-		return processKey(data, cfg.trimWhitespace, cfg.decode)
+		return processKey(data, cfg.trimWhitespace)
 	}
+}
+
+// Decode returns a [Provider] that loads an encoded key from p and decodes it
+// with d.
+//
+// The encoded key is copied and p's free function called before d runs, so
+// p's buffer is released as early as possible. d works on the copy, and its
+// result is copied into the returned key; the copy and d's result are both
+// zeroed, also when d fails.
+func Decode(p Provider, d Decoder) Provider {
+	return func() ([]byte, func(), error) {
+		encoded, free, err := p()
+		if err != nil {
+			free()
+			return nil, func() {}, err
+		}
+		buf := bytes.Clone(encoded)
+		free()
+		defer clear(buf)
+
+		decoded, err := d(buf)
+		defer clear(decoded[:cap(decoded)])
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("decode key: %w", err)
+		}
+		if len(decoded) == 0 {
+			return nil, func() {}, errors.New("decoded key is empty")
+		}
+
+		key := bytes.Clone(decoded)
+		return key, func() { clear(key) }, nil
+	}
+}
+
+// Hex returns a [Provider] that decodes the key from p as hexadecimal.
+func Hex(p Provider) Provider {
+	return Decode(p, decodeHex)
+}
+
+// Base64 returns a [Provider] that decodes the key from p as standard,
+// padded base64.
+func Base64(p Provider) Provider {
+	return Decode(p, decodeBase64)
 }
 
 func (c *fileConfig) open(path string) (fs.File, error) {
@@ -268,12 +260,12 @@ func readKey(r io.Reader, size int64) ([]byte, error) {
 	}
 }
 
-// processKey handles common key processing: trimming whitespace, decoding,
-// and creating a cleanup function.
+// processKey handles common key processing: trimming whitespace and creating
+// a cleanup function.
 //
 // It takes ownership of data — callers must not use data after this call,
 // and must call the returned free function to zero all key material.
-func processKey(data []byte, trimWhitespace bool, decode decodeFunc) ([]byte, func(), error) {
+func processKey(data []byte, trimWhitespace bool) ([]byte, func(), error) {
 	if trimWhitespace {
 		original := data
 		defer clear(original)
@@ -288,36 +280,11 @@ func processKey(data []byte, trimWhitespace bool, decode decodeFunc) ([]byte, fu
 		}
 	}
 
-	if decode != nil {
-		defer clear(data)
-		decoded, err := decode(data)
-		if err != nil {
-			clear(decoded)
-			return nil, func() {}, fmt.Errorf("decode key: %w", err)
-		}
-		if len(decoded) == 0 {
-			return nil, func() {}, fmt.Errorf("decoded key is empty")
-		}
-		data = decoded
-	}
-
 	return data, func() { clear(data) }, nil
 }
 
-// fromDecoder adapts a [Decoder] to a decodeFunc. A nil decoder stays nil, so
-// it still means "no decoding".
-func fromDecoder(decoder Decoder) decodeFunc {
-	if decoder == nil {
-		return nil
-	}
-	return func(data []byte) ([]byte, error) {
-		return decoder(string(data))
-	}
-}
-
-// decodeHex and decodeBase64 decode into a buffer they allocate, without the
-// string copies of the DecodeString functions. Like those, they return the
-// bytes written so far alongside any error, for processKey to zero.
+// decodeHex and decodeBase64 decode into a buffer they allocate, returning the
+// bytes written so far alongside any error, for [Decode] to zero.
 func decodeHex(data []byte) ([]byte, error) {
 	dst := make([]byte, hex.DecodedLen(len(data)))
 	n, err := hex.Decode(dst, data)
