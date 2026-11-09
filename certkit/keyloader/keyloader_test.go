@@ -189,6 +189,11 @@ func TestFromFile(t *testing.T) {
 			{"group readable", 0640},
 			{"world writable", 0606},
 			{"group writable", 0660},
+			// A single write or execute bit, with no read bit to fall back on.
+			{"group writable only", 0620},
+			{"group executable only", 0610},
+			{"world writable only", 0602},
+			{"world executable only", 0601},
 		}
 
 		for _, tt := range tests {
@@ -202,10 +207,9 @@ func TestFromFile(t *testing.T) {
 				provider := keyloader.FromFile("key.txt", keyloader.WithFilesystem(mfs))
 				key, free, err := provider()
 
-				assert.Error(t, err)
+				assert.ErrorContains(t, err, "insecure permissions")
 				assert.Nil(t, key)
 				assert.NotNil(t, free)
-				assert.Contains(t, err.Error(), "insecure permissions")
 			})
 		}
 	})
